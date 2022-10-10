@@ -28,6 +28,9 @@ public class RateLimitingInputStream extends FilterInputStream {
 
     public interface Listener {
         void onPause(long nanos);
+        default void onBytes(int bytes) {
+            ;
+        }
     }
 
     public RateLimitingInputStream(InputStream delegate, Supplier<RateLimiter> rateLimiterSupplier, Listener listener) {
@@ -48,6 +51,7 @@ public class RateLimitingInputStream extends FilterInputStream {
                 }
             }
         }
+        listener.onBytes(bytes);
     }
 
     @Override
