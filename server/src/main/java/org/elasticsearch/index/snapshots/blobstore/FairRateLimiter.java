@@ -60,7 +60,7 @@ public class FairRateLimiter extends RateLimiter.SimpleRateLimiter {
         resetMinPauseBytesIfNeeded();
 
         // If this is a bigger block size, potentially increase the min pause check bytes (to a maximum of half the rate limit)
-        long maxMinPauseCheckBytes = Math.max(bytes, (long) Math.floor(getMBPerSec() * 1024 * 1024 / 2));
+        long maxMinPauseCheckBytes = Math.min(bytes, (long) Math.floor(getMBPerSec() * 1024 * 1024 / 2));
         if (maxMinPauseCheckBytes > minPauseCheckBytes) {
             lastTimeMinPauseChanged = System.currentTimeMillis();
             minPauseCheckBytes = maxMinPauseCheckBytes;
