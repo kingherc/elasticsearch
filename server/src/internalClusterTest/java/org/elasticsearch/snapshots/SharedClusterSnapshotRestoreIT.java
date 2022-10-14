@@ -1184,9 +1184,9 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
 
     private void doConcurrentRates(ByteSizeValue rateLimit, List<ByteSizeValue> blockSizes) throws Exception {
         boolean unlimited = rateLimit == null;
-        if (unlimited) rateLimit = ByteSizeValue.ofBytes(Long.MAX_VALUE);
-        //RateLimiter rateLimiter = new RateLimiter.SimpleRateLimiter(rateLimit.getMbFrac());
-        RateLimiter rateLimiter = new FairRateLimiter(rateLimit.getMbFrac());
+        final ByteSizeValue finalRateLimit = unlimited ? ByteSizeValue.ofBytes(Long.MAX_VALUE) : rateLimit;
+        RateLimiter rateLimiter = new RateLimiter.SimpleRateLimiter(finalRateLimit.getMbFrac());
+        //RateLimiter rateLimiter = new FairRateLimiter(rateLimit.getMbFrac());
         List<CounterMetric> nsSleepCounters = new ArrayList<>(blockSizes.size());
         List<CounterMetric> msRuntimeCounters = new ArrayList<>(blockSizes.size());
         List<CounterMetric> bytesCounters = new ArrayList<>(blockSizes.size());
@@ -1199,7 +1199,7 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
             CounterMetric bytesCounter = new CounterMetric();
             bytesCounters.add(bytesCounter);
             ByteArrayInputStream stream = new ByteArrayInputStream(bytesArray);
-            inputStreams.add(new RateLimitingInputStream(stream, () -> rateLimiter, new RateLimitingInputStream.Listener() {
+            RateLimitingInputStream.Listener listener = new RateLimitingInputStream.Listener() {
                 @Override
                 public void onPause(long nanos) {
                     nsSleepCounter.inc(nanos);
@@ -1209,7 +1209,11 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
                 public void onBytes(int bytes) {
                     bytesCounter.inc(bytes);
                 }
-            }));
+            };
+            RateLimitingInputStream streamWithSameRateLimiter = new RateLimitingInputStream(stream, () -> rateLimiter, listener);
+            RateLimiter ownRateLimiter = new RateLimiter.SimpleRateLimiter(finalRateLimit.getMbFrac());
+            RateLimitingInputStream streamWithOwnRateLimiter = new RateLimitingInputStream(streamWithSameRateLimiter, () -> ownRateLimiter, listener);
+            inputStreams.add(streamWithOwnRateLimiter);
         });
 
         int threads = blockSizes.size() + (unlimited ? 0 : 1); // +1 for sampler thread
@@ -1259,7 +1263,7 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
             countdownLatch.countDown();
         });
 
-        long timeout = (bytesArray.length / rateLimit.getBytes()) * blockSizes.size() + 10;
+        long timeout = (bytesArray.length / finalRateLimit.getBytes()) * blockSizes.size() + 10;
         if (countdownLatch.await(timeout, TimeUnit.SECONDS) == false) {
             logger.warn("--> waiting for countdown latch timed out");
         }
