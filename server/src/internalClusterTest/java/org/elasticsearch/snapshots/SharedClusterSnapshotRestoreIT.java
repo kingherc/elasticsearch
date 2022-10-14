@@ -1182,11 +1182,11 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
         });
     }
 
-    private void doConcurrentRates(ByteSizeValue rateLimit, byte[] bytesArray, List<ByteSizeValue> blockSizes) throws Exception {
+    private void doConcurrentRates(ByteSizeValue rateLimit, List<ByteSizeValue> blockSizes) throws Exception {
         boolean unlimited = rateLimit == null;
         if (unlimited) rateLimit = ByteSizeValue.ofBytes(Long.MAX_VALUE);
-        RateLimiter rateLimiter = new FairRateLimiter(rateLimit.getMbFrac());
         //RateLimiter rateLimiter = new RateLimiter.SimpleRateLimiter(rateLimit.getMbFrac());
+        RateLimiter rateLimiter = new FairRateLimiter(rateLimit.getMbFrac());
         List<CounterMetric> nsSleepCounters = new ArrayList<>(blockSizes.size());
         List<CounterMetric> msRuntimeCounters = new ArrayList<>(blockSizes.size());
         List<CounterMetric> bytesCounters = new ArrayList<>(blockSizes.size());
@@ -1245,7 +1245,7 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
             };
             while (doWhile) {
                 long msNow = System.currentTimeMillis();
-                if (msNow - msBefore > 1000) { // sample every second
+                if (msNow - msBefore > 1000) { // sample every so many seconds
                     msBefore = msNow;
                     writeLine.accept(Long.valueOf(msNow - msBeginning));
                 }
@@ -1286,9 +1286,13 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
         }
     }
 
+    private static byte[] bytesArray = null;
+
     private void doConcurrentRatesWithWarmup(ByteSizeValue rateLimit, int seconds, List<ByteSizeValue> blockSizes) throws Exception {
         final long bytes = seconds * rateLimit.getBytes() / blockSizes.size(); // dividing by #threads since they'll work concurrently
-        byte[] bytesArray = randomByteArrayOfLength((int) bytes);
+        if (bytesArray == null || bytesArray.length != (int)bytes) {
+            bytesArray = randomByteArrayOfLength((int) bytes);
+        }
         logger.warn("=== Starting experiment ===");
         logger.warn(
             "--> File size to read is "
@@ -1304,21 +1308,20 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
                 + "."
         );
         logger.warn("--> First doing a warmup with a very high rate limit");
-        doConcurrentRates(null, bytesArray, blockSizes);
+        doConcurrentRates(null, blockSizes);
         logger.warn("--> Now doing the experiment with the rate limit of " + rateLimit + "/s");
-        doConcurrentRates(rateLimit, bytesArray, blockSizes);
+        doConcurrentRates(rateLimit, blockSizes);
     }
 
     public void testConcurrentRates() throws Exception {
         doConcurrentRatesWithWarmup(
-            ByteSizeValue.ofMb(1),
-            15,
-            Arrays.asList(ByteSizeValue.ofBytes(1), ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(512))
+            ByteSizeValue.ofMb(40),
+            120,
+            Arrays.asList(ByteSizeValue.ofKb(1), ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(512))
         );
-//        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(1), 15, Arrays.asList(ByteSizeValue.ofBytes(1), ByteSizeValue.ofKb(512)));
-//        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(1), 15, Arrays.asList(ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(512)));
-//        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(1), 15, Arrays.asList(ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(128)));
-//        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(1), 15, Arrays.asList(ByteSizeValue.ofKb(1), ByteSizeValue.ofKb(512)));
+//        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(1), 200, Arrays.asList(ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(512)));
+//        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(1), 200, Arrays.asList(ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(128)));
+//        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(1), 200, Arrays.asList(ByteSizeValue.ofKb(1), ByteSizeValue.ofKb(512)));
     }
 
     public void testSnapshotStatus() throws Exception {
