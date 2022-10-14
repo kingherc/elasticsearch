@@ -24,40 +24,40 @@ import org.apache.lucene.store.RateLimiter;
 public class FairRateLimiter extends RateLimiter.SimpleRateLimiter {
 
     protected volatile long minPauseCheckBytes = 0;
-    protected static final int RESET_CHECK_DURATION_MS = 1000 * 60; // every minute
+    protected static final int RESET_MIN_PAUSE_BYTES_DURATION_MS = 1000 * 60; // every minute
     protected volatile long lastTimeMinPauseChanged = 0; // in milliseconds
 
     public FairRateLimiter(double mbPerSec) {
         super(mbPerSec);
-        reset();
+        resetMinPauseBytes();
     }
 
-    private void reset() {
+    private void resetMinPauseBytes() {
         lastTimeMinPauseChanged = System.currentTimeMillis();
         minPauseCheckBytes = super.getMinPauseCheckBytes();
     }
 
-    private void resetIfNeeded() {
-        if (System.currentTimeMillis() - lastTimeMinPauseChanged > RESET_CHECK_DURATION_MS) {
-            reset();
+    private void resetMinPauseBytesIfNeeded() {
+        if (System.currentTimeMillis() - lastTimeMinPauseChanged > RESET_MIN_PAUSE_BYTES_DURATION_MS) {
+            resetMinPauseBytes();
         }
     }
 
     @Override
     public void setMBPerSec(double mbPerSec) {
         super.setMBPerSec(mbPerSec);
-        reset();
+        resetMinPauseBytes();
     }
 
     @Override
     public long getMinPauseCheckBytes() {
-        resetIfNeeded();
+        resetMinPauseBytesIfNeeded();
         return minPauseCheckBytes;
     }
 
     @Override
     public long pause(long bytes) {
-        resetIfNeeded();
+        resetMinPauseBytesIfNeeded();
 
         // If this is a bigger block size, potentially increase the min pause check bytes (to a maximum of half the rate limit)
         long maxMinPauseCheckBytes = Math.max(bytes, (long) Math.floor(getMBPerSec() * 1024 * 1024 / 2));
