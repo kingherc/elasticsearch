@@ -1314,14 +1314,16 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
     }
 
     public void testConcurrentRates() throws Exception {
-//        doConcurrentRatesWithWarmup(
-//            ByteSizeValue.ofMb(40),
-//            10,
-//            Arrays.asList(ByteSizeValue.ofKb(1), ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(512))
-//        );
-        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(1), 200, Arrays.asList(ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(512)));
-        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(1), 200, Arrays.asList(ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(128)));
-        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(1), 200, Arrays.asList(ByteSizeValue.ofKb(1), ByteSizeValue.ofKb(512)));
+        final int rate = 40;
+        final int seconds = 10;
+        doConcurrentRatesWithWarmup(
+            ByteSizeValue.ofMb(rate),
+            seconds,
+            Arrays.asList(ByteSizeValue.ofKb(1), ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(512))
+        );
+        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(rate), seconds, Arrays.asList(ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(512)));
+        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(rate), seconds, Arrays.asList(ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(128)));
+        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(rate), seconds, Arrays.asList(ByteSizeValue.ofKb(1), ByteSizeValue.ofKb(512)));
     }
 
     public void testSnapshotStatus() throws Exception {
