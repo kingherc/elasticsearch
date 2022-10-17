@@ -56,6 +56,7 @@ import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.engine.EngineTestCase;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.index.snapshots.blobstore.CustomRateLimiter;
 import org.elasticsearch.index.snapshots.blobstore.FairRateLimiter;
 import org.elasticsearch.index.snapshots.blobstore.RateLimitingInputStream;
 import org.elasticsearch.indices.IndicesService;
@@ -1182,11 +1183,14 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
         });
     }
 
-    private void doConcurrentRates(ByteSizeValue rateLimit, List<ByteSizeValue> blockSizes) throws Exception {
+    private void doConcurrentRates(RateLimiterKind kind, ByteSizeValue rateLimit, List<ByteSizeValue> blockSizes) throws Exception {
         boolean unlimited = rateLimit == null;
         final ByteSizeValue finalRateLimit = unlimited ? ByteSizeValue.ofBytes(Long.MAX_VALUE) : rateLimit;
-        RateLimiter rateLimiter = new RateLimiter.SimpleRateLimiter(finalRateLimit.getMbFrac());
-        //RateLimiter rateLimiter = new FairRateLimiter(rateLimit.getMbFrac());
+        RateLimiter rateLimiter = (kind == RateLimiterKind.FAIR)
+            ? new FairRateLimiter(finalRateLimit.getMbFrac())
+            : (kind == RateLimiterKind.SIMPLE
+                ? new RateLimiter.SimpleRateLimiter(finalRateLimit.getMbFrac())
+                : new CustomRateLimiter(finalRateLimit.getMbFrac()));
         List<CounterMetric> nsSleepCounters = new ArrayList<>(blockSizes.size());
         List<CounterMetric> msRuntimeCounters = new ArrayList<>(blockSizes.size());
         List<CounterMetric> bytesCounters = new ArrayList<>(blockSizes.size());
@@ -1210,10 +1214,15 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
                     bytesCounter.inc(bytes);
                 }
             };
-            RateLimitingInputStream streamWithSameRateLimiter = new RateLimitingInputStream(stream, () -> rateLimiter, listener);
-            RateLimiter ownRateLimiter = new RateLimiter.SimpleRateLimiter(finalRateLimit.getMbFrac());
-            RateLimitingInputStream streamWithOwnRateLimiter = new RateLimitingInputStream(streamWithSameRateLimiter, () -> ownRateLimiter, listener);
-            inputStreams.add(streamWithOwnRateLimiter);
+            RateLimitingInputStream streamWithRateLimit;
+            if (kind == RateLimiterKind.CHAINED) {
+                RateLimitingInputStream streamWithSameRateLimiter = new RateLimitingInputStream(stream, () -> rateLimiter, listener);
+                RateLimiter ownRateLimiter = new RateLimiter.SimpleRateLimiter(finalRateLimit.getMbFrac());
+                streamWithRateLimit = new RateLimitingInputStream(streamWithSameRateLimiter, () -> ownRateLimiter, listener);
+            } else {
+                streamWithRateLimit = new RateLimitingInputStream(stream, () -> rateLimiter, listener);
+            }
+            inputStreams.add(streamWithRateLimit);
         });
 
         int threads = blockSizes.size() + (unlimited ? 0 : 1); // +1 for sampler thread
@@ -1231,7 +1240,7 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
         // Sampler thread
         if (unlimited == false) threadPool.executor(RATES_CLIENT).execute(() -> {
             // Output CSV header
-            String header = "ms";
+            String header = "ms,kind";
             for (int i = 0; i < blockSizes.size(); i++) {
                 header += ",blockSize" + (i+1) + ",nsSleep" + (i+1) + ",bytes" + (i+1);
             }
@@ -1241,7 +1250,7 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
             long msBefore = System.currentTimeMillis();
             boolean doWhile = countdownLatch.getCount() != 1;
             Consumer<Long> writeLine = (ms) -> {
-                String line = ms.toString();
+                String line = ms.toString() + "," + kind.name();
                 for (int i = 0; i < blockSizes.size(); i++) {
                     line += "," + blockSizes.get(i) + "," + nsSleepCounters.get(i).count() + "," + bytesCounters.get(i).count();
                 }
@@ -1285,16 +1294,19 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
                     + nsSleepCounters.get(i).count()
                     + " ns of sleep and having read a total of "
                     + bytesCounters.get(i).count()
-                    + " bytes."
+                    + " bytes. Kind: "
+                    + kind.name()
+                    + "."
             );
         }
     }
 
     private static byte[] bytesArray = null;
 
-    private void doConcurrentRatesWithWarmup(ByteSizeValue rateLimit, int seconds, List<ByteSizeValue> blockSizes) throws Exception {
+    private void doConcurrentRatesWithWarmup(RateLimiterKind kind, ByteSizeValue rateLimit, int seconds, List<ByteSizeValue> blockSizes)
+        throws Exception {
         final long bytes = seconds * rateLimit.getBytes() / blockSizes.size(); // dividing by #threads since they'll work concurrently
-        if (bytesArray == null || bytesArray.length != (int)bytes) {
+        if (bytesArray == null || bytesArray.length != (int) bytes) {
             bytesArray = randomByteArrayOfLength((int) bytes);
         }
         logger.warn("=== Starting experiment ===");
@@ -1309,25 +1321,54 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
                 + blockSizes.size()
                 + " threads with block sizes: "
                 + blockSizes
+                + ". Kind: "
+                + kind.name()
                 + "."
         );
         logger.warn("--> First doing a warmup with a very high rate limit");
-        doConcurrentRates(null, blockSizes);
+        doConcurrentRates(kind, null, blockSizes);
         logger.warn("--> Now doing the experiment with the rate limit of " + rateLimit + "/s");
-        doConcurrentRates(rateLimit, blockSizes);
+        doConcurrentRates(kind, rateLimit, blockSizes);
+    }
+
+    enum RateLimiterKind {
+        SIMPLE,
+        CUSTOM,
+        FAIR,
+        CHAINED
     }
 
     public void testConcurrentRates() throws Exception {
         final int rate = 40;
         final int seconds = 10;
-        doConcurrentRatesWithWarmup(
-            ByteSizeValue.ofMb(rate),
-            seconds,
-            Arrays.asList(ByteSizeValue.ofKb(1), ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(512))
-        );
-        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(rate), seconds, Arrays.asList(ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(512)));
-        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(rate), seconds, Arrays.asList(ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(128)));
-        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(rate), seconds, Arrays.asList(ByteSizeValue.ofKb(1), ByteSizeValue.ofKb(512)));
+        RateLimiterKind[] kinds = RateLimiterKind.values();
+        //kinds = new RateLimiterKind[]{RateLimiterKind.SIMPLE, RateLimiterKind.FAIR};
+        for (RateLimiterKind kind : kinds) {
+            doConcurrentRatesWithWarmup(
+                kind,
+                ByteSizeValue.ofMb(rate),
+                seconds,
+                Arrays.asList(ByteSizeValue.ofKb(1), ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(512))
+            );
+            doConcurrentRatesWithWarmup(
+                kind,
+                ByteSizeValue.ofMb(rate),
+                seconds,
+                Arrays.asList(ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(512))
+            );
+            doConcurrentRatesWithWarmup(
+                kind,
+                ByteSizeValue.ofMb(rate),
+                seconds,
+                Arrays.asList(ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(128))
+            );
+            doConcurrentRatesWithWarmup(
+                kind,
+                ByteSizeValue.ofMb(rate),
+                seconds,
+                Arrays.asList(ByteSizeValue.ofKb(1), ByteSizeValue.ofKb(512))
+            );
+        }
     }
 
     public void testSnapshotStatus() throws Exception {
