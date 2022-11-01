@@ -11,7 +11,7 @@ esplugin {
 archivesBaseName = 'x-pack-ccr'
 
 // Integration Test classes that cannot run with the security manager
-String[] noSecurityManagerITClasses = ["**/CloseFollowerIndexIT.class"]
+String[] noSecurityManagerITClasses = ["**/CloseFollowerIndexIT.class", "**/LeakTestIT.class"]
 
 tasks.register('internalClusterTestNoSecurityManager', Test) {
   testClassesDirs = sourceSets.internalClusterTest.output.classesDirs

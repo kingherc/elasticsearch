@@ -13,7 +13,12 @@ import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.indices.breaker.BreakerSettings;
 import org.elasticsearch.indices.breaker.HierarchyCircuitBreakerService;
+import org.elasticsearch.threadpool.ThreadPool;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -47,6 +52,12 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
         this.logger = logger;
         logger.trace(() -> new ParameterizedMessage("creating ChildCircuitBreaker with settings {}", settings));
         this.parent = parent;
+
+        if (name.equals("request")) {
+            logger.warn("Adding request ChildMemoryCircuitBreaker shutdown hook");
+            Thread printingHook = new Thread(() -> printUsedModifications());
+            Runtime.getRuntime().addShutdownHook(printingHook);
+        }
     }
 
     /**
@@ -116,9 +127,82 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
         assert newUsed >= 0 : "Used bytes: [" + newUsed + "] must be >= 0";
     }
 
+    public String getCurrentStackTrace() {
+        StringWriter sw = new StringWriter();
+        PrintWriter pw = new PrintWriter(sw);
+        new Exception().printStackTrace(pw);
+        return sw.toString();
+    }
+
+    public Map<String, AtomicLong> stackPositiveCalls = new HashMap<>();
+    public Map<String, AtomicLong> stackNegCalls = new HashMap<>();
+    public Map<String, AtomicLong> stackBytes = new HashMap<>();
+
+    public void recordUsedModification(long bytes) {
+        if (name.equals("request")) {
+            String stack = getCurrentStackTrace();
+            stackPositiveCalls.putIfAbsent(stack, new AtomicLong(0));
+            stackNegCalls.putIfAbsent(stack, new AtomicLong(0));
+            stackBytes.putIfAbsent(stack, new AtomicLong(0));
+            stackBytes.get(stack).addAndGet(bytes);
+            if (bytes >= 0) {
+                stackPositiveCalls.get(stack).incrementAndGet();
+            } else {
+                stackNegCalls.get(stack).incrementAndGet();
+            }
+        }
+    }
+
+    public void printUsedModifications() {
+        // Assign IDs to stacks
+        Map<String, Long> stacksToIDs = new HashMap<>();
+        long stackIDcounter = 1;
+        for (String stack : stackPositiveCalls.keySet()) {
+            if (stacksToIDs.containsKey(stack) == false) {
+                stacksToIDs.put(stack, stackIDcounter++);
+            }
+        }
+        for (String stack : stackNegCalls.keySet()) {
+            if (stacksToIDs.containsKey(stack) == false) {
+                stacksToIDs.put(stack, stackIDcounter++);
+            }
+        }
+        for (String stack : stackBytes.keySet()) {
+            if (stacksToIDs.containsKey(stack) == false) {
+                stacksToIDs.put(stack, stackIDcounter++);
+            }
+        }
+        if (stacksToIDs.isEmpty()) {
+            return;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("Printing positive calls" + "\n");
+        for (String stack : stackPositiveCalls.keySet()) {
+            sb.append(stacksToIDs.get(stack) + "\t\t" + stackPositiveCalls.get(stack) + "\n");
+        }
+        sb.append("Printing negative calls" + "\n");
+        for (String stack : stackNegCalls.keySet()) {
+            sb.append(stacksToIDs.get(stack) + "\t\t" + stackNegCalls.get(stack) + "\n");
+        }
+        sb.append("Printing final bytes per stack" + "\n");
+        for (String stack : stackBytes.keySet()) {
+            sb.append(stacksToIDs.get(stack) + "\t\t" + stackBytes.get(stack) + "\n");
+        }
+        sb.append("Printing stacks and their IDs" + "\n");
+        for (String stack : stacksToIDs.keySet()) {
+            sb.append("Stack ID #" + stacksToIDs.get(stack) + " has the following stack:" + "\n");
+            sb.append(stack + "\n");
+            sb.append("\n");
+        }
+        //logger.warn(sb.toString());
+        System.err.println(sb.toString());
+    }
+
     private long noLimit(long bytes, String label) {
         long newUsed;
         newUsed = this.used.addAndGet(bytes);
+        recordUsedModification(bytes);
         logger.trace(
             () -> new ParameterizedMessage(
                 "[{}] Adding [{}][{}] to used bytes [new used: [{}], limit: [-1b]]",
@@ -168,6 +252,7 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
             // Attempt to set the new used value, but make sure it hasn't changed
             // underneath us, if it has, keep trying until we are able to set it
         } while (this.used.compareAndSet(currentUsed, newUsed) == false);
+        recordUsedModification(bytes);
         return newUsed;
     }
 
@@ -184,6 +269,7 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
     public void addWithoutBreaking(long bytes) {
         long u = used.addAndGet(bytes);
         logger.trace(() -> new ParameterizedMessage("[{}] Adjusted breaker by [{}] bytes, now [{}]", this.name, bytes, u));
+        recordUsedModification(bytes);
         assert u >= 0 : "Used bytes: [" + u + "] must be >= 0";
     }
 
