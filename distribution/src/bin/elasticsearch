@@ -100,3 +100,28 @@ else
 fi
 
 exit $?
+
+export ES_JAVA_OPTS='-Des.networkaddress.cache.ttl=60 -Des.networkaddress.cache.negative.ttl=10 -Djava.awt.headless=true -Dfile.encoding=UTF-8 -Djna.nosys=true -Dio.netty.noUnsafe=true -Dio.netty.noKeySetOptimization=true -Dio.netty.recycler.maxCapacityPerThread=0 -Dio.netty.allocator.numDirectArenas=0 -Dlog4j.shutdownHookEnabled=false -Dlog4j2.disable.jmx=true -Dlog4j2.formatMsgNoLookups=true -Djava.locale.providers=SPI,COMPAT  -Djava.io.tmpdir=/tmp/elasticsearch-13933542191040914738'
+export XSHARE=""
+
+  echo \
+    ./bin/esnative \
+    "$XSHARE" \
+    $ES_JAVA_OPTS \
+    -Des.path.home="$ES_HOME" \
+    -Des.path.conf="$ES_PATH_CONF" \
+    -Des.distribution.flavor="$ES_DISTRIBUTION_FLAVOR" \
+    -Des.distribution.type="$ES_DISTRIBUTION_TYPE" \
+    -Des.bundled_jdk="$ES_BUNDLED_JDK"
+
+  exec \
+    ./bin/esnative \
+    "$XSHARE" \
+    $ES_JAVA_OPTS \
+    -Des.path.home="$ES_HOME" \
+    -Des.path.conf="$ES_PATH_CONF" \
+    -Des.distribution.flavor="$ES_DISTRIBUTION_FLAVOR" \
+    -Des.distribution.type="$ES_DISTRIBUTION_TYPE" \
+    -Des.bundled_jdk="$ES_BUNDLED_JDK"
+
+exit $?

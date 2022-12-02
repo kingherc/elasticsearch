@@ -596,14 +596,14 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
             throw new IllegalStateException(extensionSignatureMessage(extensionClass, extensionPointType, plugin));
         }
 
-        if (constructor.getParameterCount() == 1 && constructor.getParameterTypes()[0] != plugin.getClass()) {
-            throw new IllegalStateException(
-                extensionSignatureMessage(extensionClass, extensionPointType, plugin)
-                    + ", not ("
-                    + constructor.getParameterTypes()[0].getName()
-                    + ")"
-            );
-        }
+//        if (constructor.getParameterCount() == 1 && constructor.getParameterTypes()[0] != plugin.getClass()) {
+//            throw new IllegalStateException(
+//                extensionSignatureMessage(extensionClass, extensionPointType, plugin)
+//                    + ", not ("
+//                    + constructor.getParameterTypes()[0].getName()
+//                    + ")"
+//            );
+//        }
 
         try {
             if (constructor.getParameterCount() == 0) {
@@ -736,17 +736,17 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
             });
 
             Class<? extends Plugin> pluginClass = loadPluginClass(bundle.plugin.getClassname(), loader);
-            if (loader != pluginClass.getClassLoader()) {
-                throw new IllegalStateException(
-                    "Plugin ["
-                        + name
-                        + "] must reference a class loader local Plugin class ["
-                        + bundle.plugin.getClassname()
-                        + "] (class loader ["
-                        + pluginClass.getClassLoader()
-                        + "])"
-                );
-            }
+//            if (loader != pluginClass.getClassLoader()) {
+//                throw new IllegalStateException(
+//                    "Plugin ["
+//                        + name
+//                        + "] must reference a class loader local Plugin class ["
+//                        + bundle.plugin.getClassname()
+//                        + "] (class loader ["
+//                        + pluginClass.getClassLoader()
+//                        + "])"
+//                );
+//            }
             Plugin plugin = loadPlugin(pluginClass, settings, configPath);
             loaded.put(name, Tuple.tuple(plugin, spiLoader));
             return plugin;

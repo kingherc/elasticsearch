@@ -77,7 +77,7 @@ public abstract class Command implements Closeable {
             mainWithoutErrorHandling(args, terminal);
         } catch (OptionException e) {
             // print help to stderr on exceptions
-            printHelp(terminal, true);
+            //printHelp(terminal, true);
             terminal.errorPrintln(Terminal.Verbosity.SILENT, "ERROR: " + e.getMessage());
             return ExitCodes.USAGE;
         } catch (UserException e) {

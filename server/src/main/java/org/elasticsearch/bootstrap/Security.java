@@ -96,7 +96,8 @@ final class Security {
     private Security() {}
 
     static void setSecurityManager(@SuppressWarnings("removal") SecurityManager sm) {
-        System.setSecurityManager(sm);
+        //System.setSecurityManager(sm);
+        System.setSecurityManager(null);
     }
 
     /**
@@ -106,28 +107,28 @@ final class Security {
      * @param filterBadDefaults true if we should filter out bad java defaults in the system policy.
      */
     static void configure(Environment environment, boolean filterBadDefaults) throws IOException, NoSuchAlgorithmException {
-
-        // enable security policy: union of template and environment-based paths, and possibly plugin permissions
-        Map<String, URL> codebases = PolicyUtil.getCodebaseJarMap(JarHell.parseClassPath());
-        Policy.setPolicy(
-            new ESPolicy(
-                codebases,
-                createPermissions(environment),
-                getPluginAndModulePermissions(environment),
-                filterBadDefaults,
-                createRecursiveDataPathPermission(environment)
-            )
-        );
-
-        // enable security manager
-        final String[] classesThatCanExit = new String[] {
-            // SecureSM matches class names as regular expressions so we escape the $ that arises from the nested class name
-            ElasticsearchUncaughtExceptionHandler.PrivilegedHaltAction.class.getName().replace("$", "\\$"),
-            Command.class.getName() };
-        setSecurityManager(new SecureSM(classesThatCanExit));
-
-        // do some basic tests
-        selfTest();
+        ;
+//        // enable security policy: union of template and environment-based paths, and possibly plugin permissions
+//        Map<String, URL> codebases = PolicyUtil.getCodebaseJarMap(JarHell.parseClassPath());
+//        Policy.setPolicy(
+//            new ESPolicy(
+//                codebases,
+//                createPermissions(environment),
+//                getPluginAndModulePermissions(environment),
+//                filterBadDefaults,
+//                createRecursiveDataPathPermission(environment)
+//            )
+//        );
+//
+//        // enable security manager
+//        final String[] classesThatCanExit = new String[] {
+//            // SecureSM matches class names as regular expressions so we escape the $ that arises from the nested class name
+//            ElasticsearchUncaughtExceptionHandler.PrivilegedHaltAction.class.getName().replace("$", "\\$"),
+//            Command.class.getName() };
+//        setSecurityManager(new SecureSM(classesThatCanExit));
+//
+//        // do some basic tests
+//        selfTest();
     }
 
     /**
