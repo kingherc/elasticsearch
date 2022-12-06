@@ -231,16 +231,19 @@ final class Bootstrap {
             throw new BootstrapException(e);
         }
 
-        node = new Node(environment) {
-            @Override
-            protected void validateNodeBeforeAcceptingRequests(
-                final BootstrapContext context,
-                final BoundTransportAddress boundTransportAddress,
-                List<BootstrapCheck> checks
-            ) throws NodeValidationException {
-                BootstrapChecks.check(context, boundTransportAddress, checks);
-            }
-        };
+        System.out.println("Thanks for running up to this point!");
+        System.exit(0);
+
+//        node = new Node(environment) {
+//            @Override
+//            protected void validateNodeBeforeAcceptingRequests(
+//                final BootstrapContext context,
+//                final BoundTransportAddress boundTransportAddress,
+//                List<BootstrapCheck> checks
+//            ) throws NodeValidationException {
+//                BootstrapChecks.check(context, boundTransportAddress, checks);
+//            }
+//        };
     }
 
     static SecureSettings loadSecureSettings(Environment initialEnv) throws BootstrapException {
