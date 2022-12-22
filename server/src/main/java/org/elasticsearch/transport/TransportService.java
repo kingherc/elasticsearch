@@ -38,6 +38,7 @@ import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.node.NodeClosedException;
 import org.elasticsearch.node.ReportingService;
 import org.elasticsearch.tasks.Task;
+import org.elasticsearch.tasks.TaskId;
 import org.elasticsearch.tasks.TaskManager;
 import org.elasticsearch.threadpool.Scheduler;
 import org.elasticsearch.threadpool.ThreadPool;
@@ -773,7 +774,14 @@ public class TransportService extends AbstractLifecycleComponent
                 if (unregisterChildNode == null) {
                     delegate = handler;
                 } else {
-                    delegate = new UnregisterChildTransportResponseHandler<>(unregisterChildNode, handler, action);
+                    delegate = new UnregisterChildTransportResponseHandler<>(
+                        unregisterChildNode,
+                        handler,
+                        action,
+                        request,
+                        unwrappedConn,
+                        taskManager
+                    );
                 }
             } else {
                 delegate = handler;
@@ -875,9 +883,10 @@ public class TransportService extends AbstractLifecycleComponent
         ContextRestoreResponseHandler<T> responseHandler = new ContextRestoreResponseHandler<>(storedContextSupplier, handler);
         // TODO we can probably fold this entire request ID dance into connection.sendRequest but it will be a bigger refactoring
         final long requestId = responseHandlers.add(new Transport.ResponseContext<>(responseHandler, connection, action));
+        request.setRequestId(requestId);
         final TimeoutHandler timeoutHandler;
         if (options.timeout() != null) {
-            timeoutHandler = new TimeoutHandler(requestId, connection.getNode(), action);
+            timeoutHandler = new TimeoutHandler(request.getParentTask(), requestId, connection.getNode(), action);
             responseHandler.setTimeoutHandler(timeoutHandler);
         } else {
             timeoutHandler = null;
@@ -895,6 +904,7 @@ public class TransportService extends AbstractLifecycleComponent
                 assert options.timeout() != null;
                 timeoutHandler.scheduleTimeout(options.timeout());
             }
+            logger.trace("sending internal request id [{}] action [{}] request [{}] options [{}]", requestId, action, request, options);
             connection.sendRequest(requestId, action, request, options); // local node optimization happens upstream
         } catch (final Exception e) {
             handleInternalSendException(action, node, requestId, timeoutHandler, e);
@@ -1272,13 +1282,15 @@ public class TransportService extends AbstractLifecycleComponent
 
     final class TimeoutHandler implements Runnable {
 
+        private final TaskId parentTask;
         private final long requestId;
         private final long sentTime = threadPool.relativeTimeInMillis();
         private final String action;
         private final DiscoveryNode node;
         volatile Scheduler.Cancellable cancellable;
 
-        TimeoutHandler(long requestId, DiscoveryNode node, String action) {
+        TimeoutHandler(TaskId parentTask, long requestId, DiscoveryNode node, String action) {
+            this.parentTask = parentTask;
             this.requestId = requestId;
             this.node = node;
             this.action = action;
@@ -1631,7 +1643,10 @@ public class TransportService extends AbstractLifecycleComponent
     private record UnregisterChildTransportResponseHandler<T extends TransportResponse> (
         Releasable unregisterChildNode,
         TransportResponseHandler<T> handler,
-        String action
+        String action,
+        TransportRequest childRequest,
+        Transport.Connection childConnection,
+        TaskManager taskManager
     ) implements TransportResponseHandler<T> {
 
         @Override
@@ -1642,6 +1657,9 @@ public class TransportService extends AbstractLifecycleComponent
 
         @Override
         public void handleException(TransportException exp) {
+            assert childRequest.getParentTask().isSet();
+            taskManager.cancelChildRemote(childRequest.getParentTask(), childRequest.getRequestId(), childConnection, exp.toString());
+
             unregisterChildNode.close();
             handler.handleException(exp);
         }
