@@ -1235,11 +1235,25 @@ public class Coordinator extends AbstractLifecycleComponent implements ClusterSt
             )
             .map(DiscoveryNode::getId);
 
+        final Set<DiscoveryNode> clusterStateNodes = clusterState.nodes()
+            .stream()
+            .collect(Collectors.toSet());
+        final Set<DiscoveryNode> clusterStateMasterNodes = clusterState.nodes()
+            .stream()
+            .filter(DiscoveryNode::isMasterNode)
+            .collect(Collectors.toSet());
         final Set<DiscoveryNode> liveNodes = clusterState.nodes()
             .stream()
             .filter(DiscoveryNode::isMasterNode)
             .filter(coordinationState.get()::containsJoinVoteFor)
+            // TODO: always make sure getLocalNode() is here
             .collect(Collectors.toSet());
+        logger.warn(
+            "LOGGING cluster state nodes = [{}], cluster state master nodes = [{}], live nodes = [{}]",
+            clusterStateNodes,
+            clusterStateMasterNodes,
+            liveNodes
+        );
         final VotingConfiguration newConfig = reconfigurator.reconfigure(
             liveNodes,
             Stream.concat(masterIneligibleNodeIdsInVotingConfig, excludedNodeIds).collect(Collectors.toSet()),

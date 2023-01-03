@@ -9,10 +9,15 @@
 package org.elasticsearch.discovery;
 
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.admin.indices.stats.IndicesStatsAction;
+import org.elasticsearch.action.admin.indices.stats.IndicesStatsRequest;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.coordination.Coordinator;
+import org.elasticsearch.cluster.coordination.Join;
 import org.elasticsearch.cluster.coordination.JoinHelper;
+import org.elasticsearch.cluster.coordination.JoinRequest;
 import org.elasticsearch.cluster.coordination.PublicationTransportHandler;
+import org.elasticsearch.cluster.coordination.StartJoinRequest;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.service.ClusterService;
@@ -20,22 +25,34 @@ import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.breaker.CircuitBreakingException;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.indices.breaker.CircuitBreakerService;
+import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.elasticsearch.test.disruption.NetworkDisruption;
 import org.elasticsearch.test.disruption.ServiceDisruptionScheme;
 import org.elasticsearch.test.disruption.SlowClusterStateProcessing;
+import org.elasticsearch.test.junit.annotations.TestLogging;
 import org.elasticsearch.test.transport.MockTransportService;
 import org.elasticsearch.transport.Transport;
+import org.elasticsearch.transport.TransportException;
+import org.elasticsearch.transport.TransportResponse;
+import org.elasticsearch.transport.TransportResponseHandler;
 import org.elasticsearch.transport.TransportService;
 
+import java.util.Collection;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 
+import static org.elasticsearch.cluster.coordination.JoinHelper.START_JOIN_ACTION_NAME;
+import static org.elasticsearch.cluster.coordination.PublicationTransportHandler.PUBLISH_STATE_ACTION_NAME;
 import static org.elasticsearch.cluster.metadata.IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING;
 import static org.elasticsearch.cluster.metadata.IndexMetadata.INDEX_NUMBER_OF_SHARDS_SETTING;
+import static org.elasticsearch.core.Strings.format;
+import static org.elasticsearch.indices.recovery.PeerRecoverySourceService.Actions.START_RECOVERY;
 
 /**
  * Tests for discovery during disruptions.
@@ -76,7 +93,7 @@ public class DiscoveryDisruptionIT extends AbstractDisruptionTestCase {
             discoveryNodes.getLocalNode().getName()
         );
         if (randomBoolean()) {
-            masterTransportService.addFailToSendNoConnectRule(localTransportService, PublicationTransportHandler.PUBLISH_STATE_ACTION_NAME);
+            masterTransportService.addFailToSendNoConnectRule(localTransportService, PUBLISH_STATE_ACTION_NAME);
         } else {
             masterTransportService.addFailToSendNoConnectRule(localTransportService, Coordinator.COMMIT_STATE_ACTION_NAME);
         }
@@ -120,6 +137,85 @@ public class DiscoveryDisruptionIT extends AbstractDisruptionTestCase {
         ensureStableCluster(3);
     }
 
+    public void testElectMasterWithLatestVersion2() throws Exception {
+        final Set<String> nodes = new HashSet<>(internalCluster().startNodes(3));
+        ensureStableCluster(3);
+
+        for (String node : nodes) {
+            MockTransportService mockTransportService = (MockTransportService) internalCluster().getInstance(
+                TransportService.class,
+                node
+            );
+
+            mockTransportService.addSendBehavior((connection, requestId, action, request, options) -> {
+                if (request instanceof JoinRequest joinRequest) {
+                    if (joinRequest.getOptionalJoin().isPresent()) {
+                        Join existingJoin = joinRequest.getOptionalJoin().get();
+                        if (existingJoin.getSourceNode().getName().equals(existingJoin.getTargetNode().getName())) {
+                            logger.info("IGNORING SENDING join request for same local node: [{}]", request);
+                            return;
+                        } else {
+                            StartJoinRequest startJoinRequest = new StartJoinRequest(existingJoin.getSourceNode(), existingJoin.getTerm());
+                            logger.info("SENDING NEW start join request: [{}]", startJoinRequest);
+                            mockTransportService.sendRequest(connection, START_JOIN_ACTION_NAME, startJoinRequest, options, new TransportResponseHandler.Empty() {
+                                @Override
+                                public void handleResponse(TransportResponse.Empty response) {
+                                    logger.info("successful response to {}", startJoinRequest);
+                                }
+
+                                @Override
+                                public void handleException(TransportException exp) {
+                                    logger.info(() -> format("failure in response to %s", startJoinRequest, exp));
+                                }
+                            });
+                        }
+                    }
+                }
+                logger.info("SENDING request with ID [{}]: [{}]", requestId, request);
+                connection.sendRequest(requestId, action, request, options);
+            });
+
+            mockTransportService.addRequestHandlingBehavior(
+                JoinHelper.JOIN_ACTION_NAME,
+                (handler, request, channel, task) -> {
+                    if (request instanceof JoinRequest joinRequest) {
+                        if (joinRequest.getOptionalJoin().isPresent()) {
+                            Join existingJoin = joinRequest.getOptionalJoin().get();
+                            if (existingJoin.getSourceNode().getName().equals(existingJoin.getTargetNode().getName())) {
+                                logger.info("IGNORING RECEIVING join request from same local node: [{}]", request);
+                                return;
+                            }
+                        }
+                    }
+                    logger.info("RECEIVING request: [{}]", request);
+                    handler.messageReceived(request, channel, task);
+                }
+            );
+
+            mockTransportService.addRequestHandlingBehavior(
+                PUBLISH_STATE_ACTION_NAME,
+                (handler, request, channel, task) -> {
+                    logger.info("RECEIVING request: [{}]", request);
+                    handler.messageReceived(request, channel, task);
+                }
+            );
+        }
+
+        ServiceDisruptionScheme isolateAllNodes = new NetworkDisruption(
+            new NetworkDisruption.IsolateAllNodes(nodes),
+            NetworkDisruption.DISCONNECT
+        );
+        internalCluster().setDisruptionScheme(isolateAllNodes);
+
+        logger.info("--> forcing a complete election");
+        isolateAllNodes.startDisrupting();
+        for (String node : nodes) {
+            assertNoMaster(node);
+        }
+        internalCluster().clearDisruptionScheme();
+        ensureStableCluster(3);
+    }
+
     public void testElectMasterWithLatestVersion() throws Exception {
         final Set<String> nodes = new HashSet<>(internalCluster().startNodes(3));
         ensureStableCluster(3);
@@ -138,6 +234,7 @@ public class DiscoveryDisruptionIT extends AbstractDisruptionTestCase {
         ensureStableCluster(3);
         final String preferredMasterName = internalCluster().getMasterName();
         final DiscoveryNode preferredMaster = internalCluster().clusterService(preferredMasterName).localNode();
+        // FAILED HERE ALREADY
         logger.info("--> preferred master is {}", preferredMaster);
         final Set<String> nonPreferredNodes = new HashSet<>(nodes);
         nonPreferredNodes.remove(preferredMasterName);

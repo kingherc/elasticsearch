@@ -212,6 +212,10 @@ public class CoordinationState {
     public boolean handleJoin(Join join) {
         assert join.targetMatches(localNode) : "handling join " + join + " for the wrong node " + localNode;
 
+        if (join.getSourceNode().getId().equals(localNode.getId())) {
+            logger.info("voted for self", new RuntimeException("stack trace"));
+        }
+
         if (join.getTerm() != getCurrentTerm()) {
             logger.debug("handleJoin: ignored join due to term mismatch (expected: [{}], actual: [{}])", getCurrentTerm(), join.getTerm());
             throw new CoordinationStateRejectedException(
