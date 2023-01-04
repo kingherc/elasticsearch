@@ -315,6 +315,25 @@ public class CoordinationStateTests extends ESTestCase {
         assertFalse(cs1.handleJoin(join));
     }
 
+    public void testBla() {
+        VotingConfiguration initialConfig = VotingConfiguration.of(node1);
+        ClusterState state1 = clusterState(0L, 0L, node1, initialConfig, initialConfig, 42L);
+        cs1.setInitialState(state1);
+
+        StartJoinRequest startJoinRequest1 = new StartJoinRequest(node2, 1);
+        cs1.handleStartJoin(startJoinRequest1);
+        ClusterState state2 = clusterState(startJoinRequest1.getTerm(), 2, node1, initialConfig, initialConfig, 42L);
+        cs1.handlePublishRequest(new PublishRequest(state2));
+        StartJoinRequest startJoinRequest2 = new StartJoinRequest(node2, startJoinRequest1.getTerm() + 1);
+        Join v1 = cs1.handleStartJoin(startJoinRequest2);
+
+        Join join = new Join(node2, node1, v1.getTerm(), randomLongBetween(0, state2.term()), randomLongBetween(0, state2.version()));
+        assertTrue(cs1.handleJoin(join));
+        assertFalse(cs1.electionWon());
+        assertEquals(cs1.getLastPublishedVersion(), 0L);
+        assertFalse(cs1.handleJoin(join));
+    }
+
     public void testJoinDoesNotWinElectionWhenOnlyCommittedConfigQuorum() {
         VotingConfiguration configNode1 = VotingConfiguration.of(node1);
         VotingConfiguration configNode2 = VotingConfiguration.of(node2);

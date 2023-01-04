@@ -214,6 +214,7 @@ public class CoordinationState {
 
         if (join.getSourceNode().getId().equals(localNode.getId())) {
             logger.info("voted for self", new RuntimeException("stack trace"));
+            //return true;
         }
 
         if (join.getTerm() != getCurrentTerm()) {

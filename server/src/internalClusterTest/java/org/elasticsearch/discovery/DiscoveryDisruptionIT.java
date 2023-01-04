@@ -155,7 +155,7 @@ public class DiscoveryDisruptionIT extends AbstractDisruptionTestCase {
                             logger.info("IGNORING SENDING join request for same local node: [{}]", request);
                             return;
                         } else {
-                            StartJoinRequest startJoinRequest = new StartJoinRequest(existingJoin.getSourceNode(), existingJoin.getTerm());
+                            StartJoinRequest startJoinRequest = new StartJoinRequest(existingJoin.getSourceNode(), existingJoin.getTerm() + between(-2, 3));
                             logger.info("SENDING NEW start join request: [{}]", startJoinRequest);
                             mockTransportService.sendRequest(connection, START_JOIN_ACTION_NAME, startJoinRequest, options, new TransportResponseHandler.Empty() {
                                 @Override
@@ -171,7 +171,12 @@ public class DiscoveryDisruptionIT extends AbstractDisruptionTestCase {
                         }
                     }
                 }
-                logger.info("SENDING request with ID [{}]: [{}]", requestId, request);
+                //logger.info("SENDING request with ID [{}]: [{}]", requestId, request);
+                try {
+                    Thread.sleep(1);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
                 connection.sendRequest(requestId, action, request, options);
             });
 
