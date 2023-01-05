@@ -1235,25 +1235,25 @@ public class Coordinator extends AbstractLifecycleComponent implements ClusterSt
             )
             .map(DiscoveryNode::getId);
 
-        final Set<DiscoveryNode> clusterStateNodes = clusterState.nodes()
-            .stream()
-            .collect(Collectors.toSet());
-        final Set<DiscoveryNode> clusterStateMasterNodes = clusterState.nodes()
-            .stream()
-            .filter(DiscoveryNode::isMasterNode)
-            .collect(Collectors.toSet());
+//        final Set<DiscoveryNode> clusterStateNodes = clusterState.nodes()
+//            .stream()
+//            .collect(Collectors.toSet());
+//        final Set<DiscoveryNode> clusterStateMasterNodes = clusterState.nodes()
+//            .stream()
+//            .filter(DiscoveryNode::isMasterNode)
+//            .collect(Collectors.toSet());
         final Set<DiscoveryNode> liveNodes = clusterState.nodes()
             .stream()
             .filter(DiscoveryNode::isMasterNode)
             .filter(coordinationState.get()::containsJoinVoteFor)
             // TODO: always make sure getLocalNode() is here
             .collect(Collectors.toSet());
-        logger.warn(
-            "LOGGING cluster state nodes = [{}], cluster state master nodes = [{}], live nodes = [{}]",
-            clusterStateNodes,
-            clusterStateMasterNodes,
-            liveNodes
-        );
+//        logger.warn(
+//            "LOGGING cluster state nodes = [{}], cluster state master nodes = [{}], live nodes = [{}]",
+//            clusterStateNodes,
+//            clusterStateMasterNodes,
+//            liveNodes
+//        );
         final VotingConfiguration newConfig = reconfigurator.reconfigure(
             liveNodes,
             Stream.concat(masterIneligibleNodeIdsInVotingConfig, excludedNodeIds).collect(Collectors.toSet()),
@@ -1905,6 +1905,11 @@ public class Coordinator extends AbstractLifecycleComponent implements ClusterSt
         private void handleAssociatedJoin(Join join) {
             if (join.getTerm() == getCurrentTerm() && missingJoinVoteFrom(join.getSourceNode())) {
                 logger.trace("handling {}", join);
+//                try {
+//                    Thread.sleep(10000);
+//                } catch (InterruptedException e) {
+//                    throw new RuntimeException(e);
+//                }
                 handleJoin(join);
             }
         }
@@ -1930,6 +1935,14 @@ public class Coordinator extends AbstractLifecycleComponent implements ClusterSt
                 // processed, so we have to handle this late response here.
                 handleAssociatedJoin(join);
             } else {
+                if (join.getSourceNode().equals(getLocalNode())) {
+                    logger.warn("RECEIVING DELAYED JOIN [{}]", join);
+//                    try {
+//                        Thread.sleep(1000);
+//                    } catch (InterruptedException e) {
+//                        throw new RuntimeException(e);
+//                    }
+                }
                 receivedJoins.add(join);
             }
         }

@@ -99,6 +99,42 @@ import static org.hamcrest.Matchers.startsWith;
 @TestLogging(reason = "these tests do a lot of log-worthy things but we usually don't care", value = "org.elasticsearch:FATAL")
 public class CoordinatorTests extends AbstractCoordinatorTestCase {
 
+    public void testBla() {
+        try (Cluster cluster = new Cluster(3)) {
+            cluster.runRandomly();
+            cluster.stabilise();
+            final ClusterNode leader = cluster.getAnyLeader();
+            final ClusterNode follower0 = cluster.getAnyNodeExcept(leader);
+            final ClusterNode follower1 = cluster.getAnyNodeExcept(leader, follower0);
+
+//            StartJoinRequest startJoinRequest = new StartJoinRequest(n1, 1L);
+
+            //leader.coordinator.hand
+            //leader.coordinator.state
+            //leader.joi
+//            node1.coordinationState.handleJoin(node1.coordinationState.handleStartJoin(startJoinRequest));
+//            node1.coordinationState.handleJoin(node2.coordinationState.handleStartJoin(startJoinRequest));
+//            node1.coordinationState.handleJoin(node3.coordinationState.handleStartJoin(startJoinRequest));
+
+            leader.blackhole();
+            follower0.onDisconnectEventFrom(leader);
+            follower1.onDisconnectEventFrom(leader);
+            // let followers elect a leader among themselves before healing the leader and running the publication
+            cluster.runFor(
+                DEFAULT_DELAY_VARIABILITY // disconnect is scheduled
+                    + DEFAULT_ELECTION_DELAY,
+                "elect new leader"
+            );
+            // cluster has two nodes in mode LEADER, in different terms ofc, and the one in the lower term won’t be able to publish anything
+            leader.heal();
+            AckCollector ackCollector = leader.submitValue(randomLong());
+            cluster.stabilise();
+            assertTrue("expected nack from " + leader, ackCollector.hasAckedUnsuccessfully(leader));
+            assertTrue("expected nack from " + follower0, ackCollector.hasAckedUnsuccessfully(follower0));
+            assertTrue("expected nack from " + follower1, ackCollector.hasAckedUnsuccessfully(follower1));
+        }
+    }
+
     public void testCanUpdateClusterStateAfterStabilisation() {
         try (Cluster cluster = new Cluster(randomIntBetween(1, 5))) {
             cluster.runRandomly();
