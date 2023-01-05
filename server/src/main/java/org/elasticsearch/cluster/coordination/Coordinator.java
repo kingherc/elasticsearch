@@ -1936,7 +1936,7 @@ public class Coordinator extends AbstractLifecycleComponent implements ClusterSt
                 handleAssociatedJoin(join);
             } else {
                 if (join.getSourceNode().equals(getLocalNode())) {
-                    logger.warn("RECEIVING DELAYED JOIN [{}]", join);
+                    logger.warn("PROCESSING POST JOIN [{}]", join);
 //                    try {
 //                        Thread.sleep(1000);
 //                    } catch (InterruptedException e) {

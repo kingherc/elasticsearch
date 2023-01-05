@@ -150,7 +150,6 @@ public class DiscoveryDisruptionIT extends AbstractDisruptionTestCase {
         AtomicInteger receivedJoins = new AtomicInteger(0);
         AtomicInteger startJoins = new AtomicInteger(0);
         AtomicInteger sentJoins = new AtomicInteger(0);
-//        AtomicReference<DiscoveryNode> delayedNode = new AtomicReference<DiscoveryNode>(null);
         CountDownLatch countDownLatch = new CountDownLatch(2);
 
         for (String node : nodes) {
@@ -160,23 +159,27 @@ public class DiscoveryDisruptionIT extends AbstractDisruptionTestCase {
             );
 
             mockTransportService.addSendBehavior((connection, requestId, action, request, options) -> {
-                if (request instanceof JoinRequest joinRequest) {
+                if (request instanceof StartJoinRequest startJoinRequest) {
+                    int number = startJoins.incrementAndGet();
+                    if (number > 2) {
+                        logger.info("DELAYING SENDING START JOIN request #{} to node [{}]: [{}]", number, connection.getNode(), request);
+                        try {
+                            countDownLatch.await();
+                        } catch (InterruptedException e) {
+                            throw new RuntimeException(e);
+                        }
+                    } else {
+                        logger.info("SENDING START JOIN request #{} to node [{}]: [{}]", number, connection.getNode(), request);
+                    }
+                } else if (request instanceof JoinRequest joinRequest) {
                     if (joinRequest.getSourceNode().equals(connection.getNode()) == false) {
                         if (sentJoins.incrementAndGet() % 2 == 0) { // 2nd one will be delayed on purpose
-                            // Delay until other nodes formed cluster
-                            logger.info("DELAYING SENDING JOIN request to node [{}]: [{}]", connection.getNode(), request);
-                            try {
-                                countDownLatch.await();
-                                Thread.sleep(1000);
-                            } catch (InterruptedException e) {
-                                throw new RuntimeException(e);
-                            }
-                            // Send two new start join requests?
-                            return; // ignore original join request
+                            logger.info("IGNORING SENDING JOIN request to node [{}]: [{}]", connection.getNode(), request);
+                            return;
                         }
                     }
+                    logger.info("SENDING JOIN request to node [{}]: [{}]", connection.getNode(), request);
                 }
-                logger.info("SENDING JOIN request to node [{}]: [{}]", connection.getNode(), request);
                 connection.sendRequest(requestId, action, request, options);
             });
 
@@ -188,21 +191,7 @@ public class DiscoveryDisruptionIT extends AbstractDisruptionTestCase {
                             Join existingJoin = joinRequest.getOptionalJoin().get();
                             if (existingJoin.getSourceNode().getName().equals(existingJoin.getTargetNode().getName())) {
                                 ;
-                                //logger.info("IGNORING RECEIVING join request from same local node: [{}]", request);
-                                //return;
                             } else {
-//                                if (receivedJoins.incrementAndGet() % 3 == 0) { // 3rd one will be delayed on purpose
-//                                    // Delay until other nodes formed cluster
-//                                    logger.info("DELAYING JOIN request: [{}]", request);
-//                                    try {
-//                                        countDownLatch.await();
-//                                        Thread.sleep(1000);
-//                                    } catch (InterruptedException e) {
-//                                        throw new RuntimeException(e);
-//                                    }
-//                                    // Send new start joins?
-//                                    return; // ignore original join request
-//                                }
                                 ;
                             }
                         }
@@ -212,48 +201,9 @@ public class DiscoveryDisruptionIT extends AbstractDisruptionTestCase {
                 }
             );
 
-            mockTransportService.addSendBehavior((connection, requestId, action, request, options) -> {
-                if (request instanceof StartJoinRequest startJoinRequest) {
-                    int number = startJoins.incrementAndGet();
-                    logger.info("SENDING START JOIN request #{} to node [{}]: [{}]", number, connection.getNode(), request);
-//                    if (number % 3 == 0) {
-//                        while (delayedNode.get() == null) {
-//                            if (delayedNode.compareAndSet(null, startJoinRequest.getSourceNode())) {
-//                                logger.info("SETTINGG delayed node TO: [{}]", delayedNode.get());
-//                                // Delay request until others have formed cluster
-//                                try {
-//                                    countDownLatch.await();
-//                                    Thread.sleep(100);
-//                                } catch (InterruptedException e) {
-//                                    throw new RuntimeException(e);
-//                                }
-//                            }
-//                        }
-//                    }
-                }
-                connection.sendRequest(requestId, action, request, options);
-            });
-
-//            mockTransportService.addRequestHandlingBehavior(
-//                START_JOIN_ACTION_NAME,
-//                (handler, request, channel, task) -> {
-//                    logger.info("RECEIVING START JOIN request: [{}]", request);
-//                    if (startJoins.incrementAndGet() % 3 == 0) {
-//                        // Third one will be delayed.
-//                    }
-//                    handler.messageReceived(request, channel, task);
-//                }
-//            );
-
-
             mockTransportService.addRequestHandlingBehavior(
                 PUBLISH_STATE_ACTION_NAME,
                 (handler, request, channel, task) -> {
-//                    if (delayedNode.get() != null && delayedNode.get().getName().equals(node)) {
-//                        logger.info("RECEIVING PUBLISH STATE FOR DELAYED NODE request: [{}]", request);
-//                    } else {
-//                        logger.info("RECEIVING PUBLISH STATE request: [{}]", request);
-//                    }
                     countDownLatch.countDown();
                     logger.info("RECEIVING PUBLISH STATE request: [{}]", request);
                     handler.messageReceived(request, channel, task);
