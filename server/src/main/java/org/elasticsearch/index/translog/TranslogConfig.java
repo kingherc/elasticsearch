@@ -12,10 +12,12 @@ import org.elasticsearch.common.io.DiskIoBufferPool;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.shard.ShardId;
 
 import java.nio.file.Path;
+import java.util.Optional;
 
 /*
  * Holds all the configuration that is used to create a {@link Translog}.
@@ -33,6 +35,7 @@ public final class TranslogConfig {
     private final Path translogPath;
     private final ByteSizeValue bufferSize;
     private final OperationListener operationListener;
+    private final Optional<SyncExtender> syncExtender;
 
     /**
      * Creates a new TranslogConfig instance
@@ -53,7 +56,7 @@ public final class TranslogConfig {
         ByteSizeValue bufferSize,
         DiskIoBufferPool diskIoBufferPool
     ) {
-        this(shardId, translogPath, indexSettings, bigArrays, bufferSize, diskIoBufferPool, (d, s, l) -> {});
+        this(shardId, translogPath, indexSettings, bigArrays, bufferSize, diskIoBufferPool, (d, s, l) -> {}, Optional.empty());
     }
 
     public TranslogConfig(
@@ -63,7 +66,8 @@ public final class TranslogConfig {
         BigArrays bigArrays,
         ByteSizeValue bufferSize,
         DiskIoBufferPool diskIoBufferPool,
-        OperationListener operationListener
+        OperationListener operationListener,
+        Optional<SyncExtender> syncExtender
     ) {
         this.bufferSize = bufferSize;
         this.indexSettings = indexSettings;
@@ -72,6 +76,7 @@ public final class TranslogConfig {
         this.bigArrays = bigArrays;
         this.diskIoBufferPool = diskIoBufferPool;
         this.operationListener = operationListener;
+        this.syncExtender = syncExtender;
     }
 
     /**
@@ -119,5 +124,9 @@ public final class TranslogConfig {
 
     public OperationListener getOperationListener() {
         return operationListener;
+    }
+
+    public Optional<SyncExtender> getSyncExtender() {
+        return syncExtender;
     }
 }

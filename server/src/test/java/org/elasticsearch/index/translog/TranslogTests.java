@@ -100,6 +100,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -295,7 +296,8 @@ public class TranslogTests extends ESTestCase {
             NON_RECYCLING_INSTANCE,
             bufferSize,
             randomBoolean() ? DiskIoBufferPool.INSTANCE : RANDOMIZING_IO_BUFFERS,
-            Objects.requireNonNullElse(listener, (d, s, l) -> {})
+            Objects.requireNonNullElse(listener, (d, s, l) -> {}),
+            Optional.empty()
         );
     }
 

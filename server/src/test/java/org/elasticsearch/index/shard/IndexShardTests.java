@@ -73,6 +73,7 @@ import org.elasticsearch.index.engine.CommitStats;
 import org.elasticsearch.index.engine.DocIdSeqNoAndSource;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.engine.EngineConfig;
+import org.elasticsearch.index.engine.EngineFactory;
 import org.elasticsearch.index.engine.EngineTestCase;
 import org.elasticsearch.index.engine.InternalEngine;
 import org.elasticsearch.index.engine.InternalEngineFactory;
@@ -104,6 +105,7 @@ import org.elasticsearch.index.store.StoreStats;
 import org.elasticsearch.index.store.StoreUtils;
 import org.elasticsearch.index.translog.TestTranslog;
 import org.elasticsearch.index.translog.Translog;
+import org.elasticsearch.index.translog.TranslogConfig;
 import org.elasticsearch.index.translog.TranslogStats;
 import org.elasticsearch.indices.IndicesQueryCache;
 import org.elasticsearch.indices.breaker.NoneCircuitBreakerService;
@@ -140,6 +142,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
@@ -1548,6 +1551,69 @@ public class IndexShardTests extends IndexShardTestCase {
             thread[i].join();
         }
         assertTrue(semaphore.tryAcquire(Integer.MAX_VALUE, 10, TimeUnit.SECONDS));
+
+        closeShards(shard);
+    }
+
+    public void testSyncExtender() throws InterruptedException, IOException {
+        final AtomicInteger syncCalled = new AtomicInteger();
+        final EngineFactory engineFactory = config -> {
+            TranslogConfig translogConfig = config.getTranslogConfig();
+            TranslogConfig newTranslogConfig = new TranslogConfig(
+                translogConfig.getShardId(),
+                translogConfig.getTranslogPath(),
+                translogConfig.getIndexSettings(),
+                translogConfig.getBigArrays(),
+                translogConfig.getBufferSize(),
+                translogConfig.getDiskIoBufferPool(),
+                (d, s, l) -> {},
+                Optional.of((shardId, location, listener) -> {
+                    syncCalled.incrementAndGet();
+                    listener.onResponse(null);
+                })
+            );
+            EngineConfig newConfig = new EngineConfig(
+                config.getShardId(),
+                config.getThreadPool(),
+                config.getIndexSettings(),
+                config.getWarmer(),
+                config.getStore(),
+                config.getMergePolicy(),
+                config.getAnalyzer(),
+                config.getSimilarity(),
+                config.getCodecService(),
+                config.getEventListener(),
+                config.getQueryCache(),
+                config.getQueryCachingPolicy(),
+                newTranslogConfig,
+                config.getFlushMergesAfter(),
+                config.getExternalRefreshListener(),
+                config.getInternalRefreshListener(),
+                config.getIndexSort(),
+                config.getCircuitBreakerService(),
+                config.getGlobalCheckpointSupplier(),
+                config.retentionLeasesSupplier(),
+                config.getPrimaryTermSupplier(),
+                config.getSnapshotCommitSupplier(),
+                config.getLeafSorter(),
+                config.getRelativeTimeInNanosSupplier(),
+                config.getIndexCommitListener(),
+                config.isPromotableToPrimary()
+            );
+            return new InternalEngine(newConfig);
+        };
+        IndexShard shard = newStartedShard(true, Settings.EMPTY, engineFactory);
+
+        final long numDocs = randomIntBetween(1, 10);
+        for (int i = 0; i < numDocs; i++) {
+            indexDoc(shard, "_doc", Integer.toString(i));
+        }
+        shard.refresh("test");
+
+        int callsBeforeSync = syncCalled.get();
+        shard.sync();
+        int calls = syncCalled.get() - callsBeforeSync;
+        assertThat(calls, equalTo(1));
 
         closeShards(shard);
     }

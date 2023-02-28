@@ -30,14 +30,20 @@ import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.ActionListenerResponseHandler;
+import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.action.ActionRunnable;
 import org.elasticsearch.action.admin.indices.flush.FlushRequest;
 import org.elasticsearch.action.admin.indices.forcemerge.ForceMergeRequest;
+import org.elasticsearch.action.support.PlainActionFuture;
+import org.elasticsearch.action.support.RefCountingListener;
 import org.elasticsearch.action.support.replication.PendingReplicationActions;
 import org.elasticsearch.action.support.replication.ReplicationResponse;
+import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.DataStream;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.MappingMetadata;
+import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.routing.IndexShardRoutingTable;
 import org.elasticsearch.cluster.routing.RecoverySource;
 import org.elasticsearch.cluster.routing.RecoverySource.SnapshotRecoverySource;
@@ -127,6 +133,7 @@ import org.elasticsearch.index.store.Store;
 import org.elasticsearch.index.store.Store.MetadataSnapshot;
 import org.elasticsearch.index.store.StoreFileMetadata;
 import org.elasticsearch.index.store.StoreStats;
+import org.elasticsearch.index.translog.SyncExtender;
 import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.index.translog.TranslogConfig;
 import org.elasticsearch.index.translog.TranslogStats;
@@ -148,6 +155,8 @@ import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.search.internal.FieldUsageTrackingDirectoryReader;
 import org.elasticsearch.search.suggest.completion.CompletionStats;
 import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.transport.TransportRequestOptions;
+import org.elasticsearch.transport.TransportResponse;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -3667,7 +3676,22 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      */
     public final void sync(Translog.Location location, Consumer<Exception> syncListener) {
         verifyNotClosed();
-        translogSyncProcessor.put(location, syncListener);
+        Optional<SyncExtender> syncExtender = getEngine().config().getTranslogConfig().getSyncExtender();
+        if (syncExtender.isEmpty()) {
+            translogSyncProcessor.put(location, syncListener);
+        } else {
+            try (var listeners = new RefCountingListener(ActionListener.wrap(ignored -> syncListener.accept(null), syncListener))) {
+                syncExtender.get().syncCalled(shardId, Optional.of(location), listeners.acquire());
+                final var translogSyncListener = listeners.acquire();
+                translogSyncProcessor.put(location, e -> {
+                    if (e == null) {
+                        translogSyncListener.onResponse(null);
+                    } else {
+                        translogSyncListener.onFailure(e);
+                    }
+                });
+            }
+        }
     }
 
     public void sync() throws IOException {

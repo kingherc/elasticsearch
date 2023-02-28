@@ -42,6 +42,7 @@ import org.elasticsearch.Assertions;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.index.IndexRequest;
+import org.elasticsearch.action.support.PlainActionFuture;
 import org.elasticsearch.cluster.metadata.DataStream;
 import org.elasticsearch.common.lucene.LoggerInfoStream;
 import org.elasticsearch.common.lucene.Lucene;
@@ -79,6 +80,7 @@ import org.elasticsearch.index.seqno.SeqNoStats;
 import org.elasticsearch.index.seqno.SequenceNumbers;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.shard.ShardLongFieldRange;
+import org.elasticsearch.index.translog.SyncExtender;
 import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.index.translog.TranslogConfig;
 import org.elasticsearch.index.translog.TranslogCorruptedException;
@@ -97,6 +99,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -592,7 +595,19 @@ public class InternalEngine extends Engine {
 
     @Override
     public void syncTranslog() throws IOException {
-        translog.sync();
+        Optional<SyncExtender> syncExtender = config().getTranslogConfig().getSyncExtender();
+        if (syncExtender.isEmpty()) {
+            translog.sync();
+        } else {
+            PlainActionFuture<Void> future = PlainActionFuture.newFuture();
+            syncExtender.get().syncCalled(shardId, Optional.empty(), future);
+            translog.sync();
+            try {
+                future.get();
+            } catch (Exception e) {
+                throw new IOException("did not complete sync extender", e);
+            }
+        }
         revisitIndexDeletionPolicyOnTranslogSynced();
     }
 
