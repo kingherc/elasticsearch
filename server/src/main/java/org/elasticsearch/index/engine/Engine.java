@@ -746,13 +746,6 @@ public abstract class Engine implements Closeable {
 
     public abstract void syncTranslog() throws IOException;
 
-    /**
-     * Called in conjunction with {@link Engine#ensureTranslogSynced(Stream)} or {@link Engine#syncTranslog()} to ensure that the translog
-     * is synced in the underlying storage. By default, it does nothing, but implementation can extend it to provide custom logic.
-     */
-    public void syncTranslogExtension(Translog.Location location, ActionListener<Void> listener) {
-        listener.onResponse(null);
-    }
 
     /**
      * Acquires a lock on the translog files and Lucene soft-deleted documents to prevent them from being trimmed
