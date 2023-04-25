@@ -986,7 +986,20 @@ public class InternalEngine extends Engine {
      */
     long doGenerateSeqNoForOperation(final Operation operation) {
         long seqno = localCheckpointTracker.generateSeqNo();
-        logger.error("Generating seqno " + seqno + " for operation " + operation);
+        logger.error(
+            "Generating seqno "
+                + seqno
+                + " for operation type {}, primary term {}, uid {}, seqno {}, origin {}, estimated size {}, id {}, version {}, version type {}",
+            operation.operationType(),
+            operation.primaryTerm(),
+            operation.uid(),
+            operation.seqNo(),
+            operation.origin(),
+            operation.estimatedSizeInBytes(),
+            operation.id(),
+            operation.version(),
+            operation.versionType()
+        );
         return seqno;
     }
 
@@ -1103,12 +1116,12 @@ public class InternalEngine extends Engine {
                         new IndexVersionValue(translogLocation, plan.versionForIndexing, index.seqNo(), index.primaryTerm())
                     );
                 }
-                logger.error("Marking index seqno " + indexResult.getSeqNo() + " as processed");
+                //logger.error("Marking index seqno " + indexResult.getSeqNo() + " as processed");
                 localCheckpointTracker.markSeqNoAsProcessed(indexResult.getSeqNo());
                 if (indexResult.getTranslogLocation() == null) {
                     // the op is coming from the translog (and is hence persisted already) or it does not have a sequence number
                     assert index.origin().isFromTranslog() || indexResult.getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO;
-                    logger.error("Marking index seqno " + indexResult.getSeqNo() + " as persisted");
+                    //logger.error("Marking index seqno " + indexResult.getSeqNo() + " as persisted");
                     localCheckpointTracker.markSeqNoAsPersisted(indexResult.getSeqNo());
                 }
                 indexResult.setTook(relativeTimeInNanosSupplier.getAsLong() - index.startTime());
@@ -1161,6 +1174,18 @@ public class InternalEngine extends Engine {
             if (opVsLucene == OpVsLuceneDocStatus.OP_STALE_OR_EQUAL) {
                 plan = IndexingStrategy.processAsStaleOp(index.version(), 0);
             } else {
+                logger.error(
+                    "Process as non primary: seqno {}, primary term {}, uid {}, origin {}, estimated size {}, id {}, version {}, version type {}. currentNotFoundOrDeleted {}.",
+                    index.seqNo(),
+                    index.primaryTerm(),
+                    index.uid(),
+                    index.origin(),
+                    index.estimatedSizeInBytes(),
+                    index.id(),
+                    index.version(),
+                    index.versionType(),
+                    opVsLucene == OpVsLuceneDocStatus.LUCENE_DOC_NOT_FOUND
+                );
                 plan = IndexingStrategy.processNormally(opVsLucene == OpVsLuceneDocStatus.LUCENE_DOC_NOT_FOUND, index.version(), 0);
             }
         }
@@ -1235,6 +1260,20 @@ public class InternalEngine extends Engine {
                     if (reserveError != null) {
                         plan = IndexingStrategy.failAsTooManyDocs(reserveError, index.id());
                     } else {
+                        logger.error(
+                            "Process as primary: seqno {}, primary term {}, uid {}, origin {}, estimated size {}, id {}, version {}, version type {}. currentNotFoundOrDeleted {}. currentVersion {}. versionValue {}.",
+                            index.seqNo(),
+                            index.primaryTerm(),
+                            index.uid(),
+                            index.origin(),
+                            index.estimatedSizeInBytes(),
+                            index.id(),
+                            index.version(),
+                            index.versionType(),
+                            currentNotFoundOrDeleted,
+                            currentVersion,
+                            versionValue
+                        );
                         plan = IndexingStrategy.processNormally(
                             currentNotFoundOrDeleted,
                             canOptimizeAddDocument ? 1L : index.versionType().updateVersion(currentVersion, index.version()),
@@ -1247,7 +1286,19 @@ public class InternalEngine extends Engine {
     }
 
     private IndexResult indexIntoLucene(Index index, IndexingStrategy plan) throws IOException {
-        logger.error("Indexing into lucene seqno " + index.seqNo() + " and uid " + index.uid().toString());
+        logger.error(
+            "Indexing into lucene seqno {}, primary term {}, uid {}, origin {}, estimated size {}, id {}, version {}, version type {}. stale plan {}, update doc {}.",
+            index.seqNo(),
+            index.primaryTerm(),
+            index.uid(),
+            index.origin(),
+            index.estimatedSizeInBytes(),
+            index.id(),
+            index.version(),
+            index.versionType(),
+            plan.addStaleOpToLucene,
+            plan.useLuceneUpdateDocument
+        );
         assert index.seqNo() >= 0 : "ops should have an assigned seq no.; origin: " + index.origin();
         assert plan.versionForIndexing >= 0 : "version must be set. got " + plan.versionForIndexing;
         assert plan.indexIntoLucene || plan.addStaleOpToLucene;
@@ -1441,6 +1492,8 @@ public class InternalEngine extends Engine {
                 final long docsWithId = searcher.count(new TermQuery(index.uid()));
                 if (docsWithId > 0) {
                     throw new AssertionError("doc [" + index.id() + "] exists [" + docsWithId + "] times in index");
+                } else {
+                    logger.error("Index UID " + index.uid() + " does not exist in lucene");
                 }
             }
         }
@@ -1523,12 +1576,12 @@ public class InternalEngine extends Engine {
                 final Translog.Location location = translog.add(new Translog.Delete(delete, deleteResult));
                 deleteResult.setTranslogLocation(location);
             }
-            logger.error("Marking delete seqno " + deleteResult.getSeqNo() + " as processed");
+            //logger.error("Marking delete seqno " + deleteResult.getSeqNo() + " as processed");
             localCheckpointTracker.markSeqNoAsProcessed(deleteResult.getSeqNo());
             if (deleteResult.getTranslogLocation() == null) {
                 // the op is coming from the translog (and is hence persisted already) or does not have a sequence number (version conflict)
                 assert delete.origin().isFromTranslog() || deleteResult.getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO;
-                logger.error("Marking delete seqno " + deleteResult.getSeqNo() + " as persisted");
+                //logger.error("Marking delete seqno " + deleteResult.getSeqNo() + " as persisted");
                 localCheckpointTracker.markSeqNoAsPersisted(deleteResult.getSeqNo());
             }
             deleteResult.setTook(System.nanoTime() - delete.startTime());
@@ -1855,12 +1908,12 @@ public class InternalEngine extends Engine {
                     noOpResult.setTranslogLocation(location);
                 }
             }
-            logger.error("Marking noop seqno " + noOpResult.getSeqNo() + " as processed");
+            //logger.error("Marking noop seqno " + noOpResult.getSeqNo() + " as processed");
             localCheckpointTracker.markSeqNoAsProcessed(noOpResult.getSeqNo());
             if (noOpResult.getTranslogLocation() == null) {
                 // the op is coming from the translog (and is hence persisted already) or it does not have a sequence number
                 assert noOp.origin().isFromTranslog() || noOpResult.getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO;
-                logger.error("Marking noop seqno " + noOpResult.getSeqNo() + " as persisted");
+                //logger.error("Marking noop seqno " + noOpResult.getSeqNo() + " as persisted");
                 localCheckpointTracker.markSeqNoAsPersisted(noOpResult.getSeqNo());
             }
             noOpResult.setTook(System.nanoTime() - noOp.startTime());

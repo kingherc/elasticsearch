@@ -149,6 +149,7 @@ public abstract class IndexRouting {
             if (indexRequest.id() == null) {
                 indexRequest.autoGenerateId();
             }
+            System.err.println("Processing IndexRequest with ID " + indexRequest.id());
         }
 
         @Override

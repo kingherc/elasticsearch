@@ -213,7 +213,7 @@ public class LocalCheckpointTracker {
                 current = bitSetMap.get(++bitSetKey);
             }
         } while (current != null && current.get(seqNoToBitSetOffset(checkPoint.get() + 1)));
-        System.err.println("Updated checkpoint to " + checkPoint.get());
+        //System.err.println("Updated checkpoint to " + checkPoint.get());
     }
 
     private static long lastSeqNoInBitSet(final long bitSetKey) {

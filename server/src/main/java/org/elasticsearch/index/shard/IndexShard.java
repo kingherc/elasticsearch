@@ -23,6 +23,7 @@ import org.apache.lucene.search.ReferenceManager;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.UsageTrackingQueryCachingPolicy;
 import org.apache.lucene.store.AlreadyClosedException;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.SetOnce;
 import org.apache.lucene.util.ThreadInterruptedException;
 import org.elasticsearch.ElasticsearchException;
@@ -1023,6 +1024,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             doc.addDynamicMappingsUpdate(mapping);
         }
         Term uid = new Term(IdFieldMapper.NAME, Uid.encodeId(doc.id()));
+        System.err.println("Calculating new uid " + uid.toString() + " from doc id " + doc.id());
         return new Engine.Index(
             uid,
             doc,
