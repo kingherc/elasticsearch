@@ -985,7 +985,9 @@ public class InternalEngine extends Engine {
      * @return the sequence number
      */
     long doGenerateSeqNoForOperation(final Operation operation) {
-        return localCheckpointTracker.generateSeqNo();
+        long seqno = localCheckpointTracker.generateSeqNo();
+        logger.error("Generating seqno " + seqno + " for operation " + operation);
+        return seqno;
     }
 
     @Override
@@ -1101,10 +1103,12 @@ public class InternalEngine extends Engine {
                         new IndexVersionValue(translogLocation, plan.versionForIndexing, index.seqNo(), index.primaryTerm())
                     );
                 }
+                logger.error("Marking index seqno " + indexResult.getSeqNo() + " as processed");
                 localCheckpointTracker.markSeqNoAsProcessed(indexResult.getSeqNo());
                 if (indexResult.getTranslogLocation() == null) {
                     // the op is coming from the translog (and is hence persisted already) or it does not have a sequence number
                     assert index.origin().isFromTranslog() || indexResult.getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO;
+                    logger.error("Marking index seqno " + indexResult.getSeqNo() + " as persisted");
                     localCheckpointTracker.markSeqNoAsPersisted(indexResult.getSeqNo());
                 }
                 indexResult.setTook(relativeTimeInNanosSupplier.getAsLong() - index.startTime());
@@ -1243,6 +1247,7 @@ public class InternalEngine extends Engine {
     }
 
     private IndexResult indexIntoLucene(Index index, IndexingStrategy plan) throws IOException {
+        logger.error("Indexing into lucene seqno " + index.seqNo() + " and uid " + index.uid().toString());
         assert index.seqNo() >= 0 : "ops should have an assigned seq no.; origin: " + index.origin();
         assert plan.versionForIndexing >= 0 : "version must be set. got " + plan.versionForIndexing;
         assert plan.indexIntoLucene || plan.addStaleOpToLucene;
@@ -1518,10 +1523,12 @@ public class InternalEngine extends Engine {
                 final Translog.Location location = translog.add(new Translog.Delete(delete, deleteResult));
                 deleteResult.setTranslogLocation(location);
             }
+            logger.error("Marking delete seqno " + deleteResult.getSeqNo() + " as processed");
             localCheckpointTracker.markSeqNoAsProcessed(deleteResult.getSeqNo());
             if (deleteResult.getTranslogLocation() == null) {
                 // the op is coming from the translog (and is hence persisted already) or does not have a sequence number (version conflict)
                 assert delete.origin().isFromTranslog() || deleteResult.getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO;
+                logger.error("Marking delete seqno " + deleteResult.getSeqNo() + " as persisted");
                 localCheckpointTracker.markSeqNoAsPersisted(deleteResult.getSeqNo());
             }
             deleteResult.setTook(System.nanoTime() - delete.startTime());
@@ -1848,10 +1855,12 @@ public class InternalEngine extends Engine {
                     noOpResult.setTranslogLocation(location);
                 }
             }
+            logger.error("Marking noop seqno " + noOpResult.getSeqNo() + " as processed");
             localCheckpointTracker.markSeqNoAsProcessed(noOpResult.getSeqNo());
             if (noOpResult.getTranslogLocation() == null) {
                 // the op is coming from the translog (and is hence persisted already) or it does not have a sequence number
                 assert noOp.origin().isFromTranslog() || noOpResult.getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO;
+                logger.error("Marking noop seqno " + noOpResult.getSeqNo() + " as persisted");
                 localCheckpointTracker.markSeqNoAsPersisted(noOpResult.getSeqNo());
             }
             noOpResult.setTook(System.nanoTime() - noOp.startTime());
@@ -2694,6 +2703,14 @@ public class InternalEngine extends Engine {
                 commitData.put(Translog.TRANSLOG_UUID_KEY, translog.getTranslogUUID());
                 commitData.put(SequenceNumbers.LOCAL_CHECKPOINT_KEY, Long.toString(localCheckpoint));
                 commitData.put(SequenceNumbers.MAX_SEQ_NO, Long.toString(localCheckpointTracker.getMaxSeqNo()));
+                logger.error(
+                    "Putting into commit local checkpoint "
+                        + Long.toString(localCheckpoint)
+                        + ", max seq no "
+                        + Long.toString(localCheckpointTracker.getMaxSeqNo())
+                        + " and translog UUID "
+                        + translog.getTranslogUUID()
+                );
                 commitData.put(MAX_UNSAFE_AUTO_ID_TIMESTAMP_COMMIT_ID, Long.toString(maxUnsafeAutoIdTimestamp.get()));
                 commitData.put(HISTORY_UUID_KEY, historyUUID);
                 final String currentForceMergeUUID = forceMergeUUID;
@@ -2783,6 +2800,7 @@ public class InternalEngine extends Engine {
      * Marks the given seq_no as seen and advances the max_seq_no of this engine to at least that value.
      */
     protected final void markSeqNoAsSeen(long seqNo) {
+        logger.error("Advance max seq no to " + seqNo);
         localCheckpointTracker.advanceMaxSeqNo(seqNo);
     }
 
@@ -3092,6 +3110,7 @@ public class InternalEngine extends Engine {
             while ((docId = iterator.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
                 final long primaryTerm = dv.docPrimaryTerm(docId);
                 final long seqNo = dv.docSeqNo(docId);
+                logger.error("Marking in restore version map, seqno " + seqNo + " as processed and persisted");
                 localCheckpointTracker.markSeqNoAsProcessed(seqNo);
                 localCheckpointTracker.markSeqNoAsPersisted(seqNo);
                 String id = idFieldLoader.id(docId);
