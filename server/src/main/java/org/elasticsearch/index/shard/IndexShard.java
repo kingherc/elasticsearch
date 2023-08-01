@@ -315,6 +315,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     ) throws IOException {
         super(shardRouting.shardId(), indexSettings);
         assert shardRouting.initializing();
+        logger.warn("MYDEBUG - Index shard created with shard routing [{}]", shardRouting);
         this.shardRouting = shardRouting;
         final Settings settings = indexSettings.getSettings();
         this.codecService = new CodecService(mapperService, bigArrays);
@@ -498,6 +499,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     ) throws IOException {
         final ShardRouting currentRouting;
         synchronized (mutex) {
+            logger.warn("MYDEBUG - update shard state, with shard routing [{}] and new routing [{}]", shardRouting, newRouting);
             currentRouting = this.shardRouting;
             assert currentRouting != null;
 
@@ -745,6 +747,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     private final AtomicBoolean primaryReplicaResyncInProgress = new AtomicBoolean();
 
+    public CountDownLatch reachedFirstRelocation = new CountDownLatch(1);
+    public CountDownLatch proceedWithFirstRelocation = new CountDownLatch(1);
+
+    public CountDownLatch reachedSecondRelocation = new CountDownLatch(1);
+    public CountDownLatch proceedWithSecondRelocation = new CountDownLatch(1);
+
     /**
      * Completes the relocation. Operations are blocked and current operations are drained before changing state to relocated. The provided
      * {@link BiConsumer} is executed after all operations are successfully blocked.
@@ -761,6 +769,22 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final ActionListener<Void> listener
     ) throws IllegalIndexShardStateException, IllegalStateException {
         assert shardRouting.primary() : "only primaries can be marked as relocated: " + shardRouting;
+        logger.warn("MYDEBUG - relocated initiated with source allocation ID [{}] and target allocation ID [{}]", shardRouting, targetAllocationId);
+        if (shardRouting.relocationFailureInfo().failedRelocations() > 0) {
+            reachedSecondRelocation.countDown();
+            try {
+                proceedWithSecondRelocation.await();
+            } catch (InterruptedException e) {
+                logger.warn("MYDEBUG - would throw", e);
+            }
+        } else {
+            reachedFirstRelocation.countDown();
+            try {
+                proceedWithFirstRelocation.await();
+            } catch (InterruptedException e) {
+                logger.warn("MYDEBUG - would throw", e);
+            }
+        }
         try (Releasable forceRefreshes = refreshListeners.forceRefreshes()) {
             indexShardOperationPermits.blockOperations(new ActionListener<>() {
                 @Override
@@ -777,6 +801,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                          * on network operations.
                          */
                         verifyRelocatingState();
+                        logger.warn("MYDEBUG - proceeding with relocation with source allocation ID [{}] and target allocation ID [{}]", shardRouting, targetAllocationId);
                         final ReplicationTracker.PrimaryContext primaryContext = replicationTracker.startRelocationHandoff(
                             targetAllocationId
                         );
@@ -882,7 +907,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      */
     private IndexShardState changeState(IndexShardState newState, String reason) {
         assert Thread.holdsLock(mutex);
-        logger.debug("state: [{}]->[{}], reason [{}]", state, newState, reason);
+        logger.warn("state: [{}]->[{}], reason [{}]", state, newState, reason);
+        try {
+            Thread.sleep(10);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
         IndexShardState previousState = state;
         state = newState;
         this.indexEventListener.indexShardStateChanged(this, previousState, newState, reason);

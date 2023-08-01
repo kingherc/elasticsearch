@@ -64,6 +64,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.CollectionUtils;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.gateway.ReplicaShardAllocatorIT;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexService;
@@ -104,6 +105,10 @@ import org.elasticsearch.test.InternalTestCluster;
 import org.elasticsearch.test.engine.MockEngineSupport;
 import org.elasticsearch.test.junit.annotations.TestLogging;
 import org.elasticsearch.test.transport.MockTransportService;
+import org.elasticsearch.test.transport.StubbableTransport;
+import org.elasticsearch.transport.Transport;
+import org.elasticsearch.transport.TransportRequest;
+import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xcontent.XContentType;
 
@@ -117,6 +122,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -1705,5 +1711,60 @@ public class IndexRecoveryIT extends AbstractIndexRecoveryIntegTestCase {
             assertThat(localCheckpointTracker.getPersistedCheckpoint(), is(greaterThanOrEqualTo(commitLocalCheckpoint)));
             return localCheckpointTracker.getPersistedCheckpoint();
         }
+    }
+
+    public void testRecoveryPrimaryCase() throws Exception {
+        final String indexName = "test";
+        TimeValue disconnectAfterDelay = TimeValue.timeValueMillis(randomIntBetween(0, 100));
+        String masterNodeName = internalCluster().startMasterOnlyNode();
+
+        final String blueNodeName = internalCluster().startNode(Settings.builder().put("node.attr.color", "blue").build());
+        final String redNodeName = internalCluster().startNode(Settings.builder().put("node.attr.color", "red").build());
+
+        indicesAdmin().prepareCreate(indexName)
+            .setSettings(indexSettings(1, 0).put(IndexMetadata.INDEX_ROUTING_INCLUDE_GROUP_SETTING.getKey() + "color", "blue"))
+            .get();
+
+        List<IndexRequestBuilder> requests = new ArrayList<>();
+        int numDocs = scaledRandomIntBetween(25, 250);
+        for (int i = 0; i < numDocs; i++) {
+            requests.add(client().prepareIndex(indexName).setSource("{}", XContentType.JSON));
+        }
+        indexRandom(true, requests);
+        ensureSearchable(indexName);
+        assertHitCount(client().prepareSearch(indexName).get(), numDocs);
+
+        MockTransportService blueMockTransportService = (MockTransportService) internalCluster().getInstance(
+            TransportService.class,
+            blueNodeName
+        );
+        MockTransportService redMockTransportService = (MockTransportService) internalCluster().getInstance(
+            TransportService.class,
+            redNodeName
+        );
+
+        IndexShard blueShard = internalCluster().getInstance(IndicesService.class, blueNodeName)
+            .indexService(resolveIndex(indexName))
+            .getShard(0);
+
+        logger.info("--> starting primary relocation recovery from blue to red");
+        updateIndexSettings(
+            Settings.builder().put(IndexMetadata.INDEX_ROUTING_INCLUDE_GROUP_SETTING.getKey() + "color", "red"),
+            indexName
+        );
+
+        blueShard.reachedFirstRelocation.await();
+        logger.info("--> disconnect red from blue node");
+        redMockTransportService.disconnectFromNode(blueMockTransportService.getLocalDiscoNode());
+
+        Thread.sleep(5000);
+        logger.info("--> proceeding with second relocation");
+        blueShard.proceedWithSecondRelocation.countDown();
+
+        Thread.sleep(5000);
+        logger.info("--> proceeding with first relocation");
+        blueShard.proceedWithFirstRelocation.countDown();
+
+        ensureGreen();
     }
 }

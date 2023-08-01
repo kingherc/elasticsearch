@@ -808,7 +808,7 @@ public class PeerRecoveryTargetService implements IndexEventListener {
                 return;
             }
 
-            if (cause instanceof ConnectTransportException) {
+            if (false && cause instanceof ConnectTransportException) {
                 logger.info(
                     "recovery of {} from [{}] interrupted by network disconnect, will retry in [{}]; cause: [{}]",
                     request.shardId(),

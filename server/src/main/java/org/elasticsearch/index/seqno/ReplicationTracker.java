@@ -962,6 +962,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         super(shardId, indexSettings);
         assert globalCheckpoint >= SequenceNumbers.UNASSIGNED_SEQ_NO : "illegal initial global checkpoint: " + globalCheckpoint;
         this.shardAllocationId = allocationId;
+        logger.warn("MYDEBUG - Primary mode false, replication tracker created, allocation ID [{}]", allocationId);
         this.primaryMode = false;
         this.operationPrimaryTerm = operationPrimaryTerm;
         this.handoffInProgress = false;
@@ -1092,6 +1093,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             && checkpoints.get(shardAllocationId).localCheckpoint == SequenceNumbers.UNASSIGNED_SEQ_NO
             : "expected " + shardAllocationId + " to have initialized entry in " + checkpoints + " when activating primary";
         assert localCheckpoint >= SequenceNumbers.NO_OPS_PERFORMED;
+        logger.warn("MYDEBUG - Primary mode activated, allocation ID [{}]", shardAllocationId);
         primaryMode = true;
         updateLocalCheckpoint(shardAllocationId, checkpoints.get(shardAllocationId), localCheckpoint);
         updateGlobalCheckpointOnPrimary();
@@ -1388,8 +1390,8 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      */
     public synchronized PrimaryContext startRelocationHandoff(String targetAllocationId) {
         assert invariant();
-        assert primaryMode;
         assert handoffInProgress == false;
+        assert primaryMode : "not in primary mode with source allocation id " + shardAllocationId + " and target allocation id " + targetAllocationId;
         assert pendingInSync.isEmpty() : "relocation handoff started while there are still shard copies pending in-sync: " + pendingInSync;
         if (checkpoints.containsKey(targetAllocationId) == false) {
             // can happen if the relocation target was removed from cluster but the recovery process isn't aware of that.
@@ -1428,6 +1430,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         assert primaryMode;
         assert handoffInProgress;
         assert relocated == false;
+        logger.warn("MYDEBUG - Primary mode deactivated upon relocation handoff completion, allocation ID [{}]", shardAllocationId);
         primaryMode = false;
         handoffInProgress = false;
         relocated = true;
@@ -1449,6 +1452,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         assert invariant();
         assert primaryMode == false;
         final Runnable runAfter = getMasterUpdateOperationFromCurrentState();
+        logger.warn("MYDEBUG - Primary mode activated with primary context, allocation ID [{}]", shardAllocationId);
         primaryMode = true;
         // capture current state to possibly replay missed cluster state update
         appliedClusterStateVersion = primaryContext.clusterStateVersion();
