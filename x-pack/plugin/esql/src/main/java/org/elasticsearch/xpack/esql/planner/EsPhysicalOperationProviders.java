@@ -7,14 +7,34 @@
 
 package org.elasticsearch.xpack.esql.planner;
 
+import org.apache.lucene.index.BinaryDocValues;
+import org.apache.lucene.index.ByteVectorValues;
+import org.apache.lucene.index.FieldInfos;
+import org.apache.lucene.index.Fields;
+import org.apache.lucene.index.FloatVectorValues;
+import org.apache.lucene.index.LeafMetaData;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.NumericDocValues;
+import org.apache.lucene.index.PointValues;
+import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.index.SortedNumericDocValues;
+import org.apache.lucene.index.SortedSetDocValues;
+import org.apache.lucene.index.StoredFieldVisitor;
+import org.apache.lucene.index.StoredFields;
+import org.apache.lucene.index.TermVectors;
+import org.apache.lucene.index.Terms;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.util.Bits;
 import org.elasticsearch.common.logging.HeaderWarning;
 import org.elasticsearch.compute.aggregation.GroupingAggregator;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.ElementType;
+import org.elasticsearch.compute.lucene.KeyValueOperator;
 import org.elasticsearch.compute.lucene.LuceneCountOperator;
 import org.elasticsearch.compute.lucene.LuceneOperator;
 import org.elasticsearch.compute.lucene.LuceneSourceOperator;
@@ -26,6 +46,9 @@ import org.elasticsearch.compute.operator.OrdinalsGroupingOperator;
 import org.elasticsearch.compute.operator.SourceOperator;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.IndexMode;
+import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.VersionType;
+import org.elasticsearch.index.get.GetResult;
 import org.elasticsearch.index.mapper.BlockLoader;
 import org.elasticsearch.index.mapper.FieldNamesFieldMapper;
 import org.elasticsearch.index.mapper.MappedFieldType;
@@ -35,10 +58,16 @@ import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.index.query.SearchExecutionContext;
 import org.elasticsearch.index.search.NestedHelper;
+import org.elasticsearch.index.shard.IndexShard;
+import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.indices.IndicesService;
+import org.elasticsearch.search.SearchService;
 import org.elasticsearch.search.internal.AliasFilter;
 import org.elasticsearch.search.lookup.SearchLookup;
+import org.elasticsearch.search.lookup.Source;
 import org.elasticsearch.search.sort.SortAndFormats;
 import org.elasticsearch.search.sort.SortBuilder;
+import org.elasticsearch.xcontent.XContentType;
 import org.elasticsearch.xpack.esql.core.expression.Attribute;
 import org.elasticsearch.xpack.esql.core.expression.Expression;
 import org.elasticsearch.xpack.esql.core.type.DataType;
@@ -53,6 +82,7 @@ import org.elasticsearch.xpack.esql.type.EsqlDataTypes;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -90,13 +120,150 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
         this.shardContexts = shardContexts;
     }
 
+    // Only useful for the max doc
+    protected class KvIndexReader extends LeafReader {
+
+        @Override
+        public CacheHelper getCoreCacheHelper() {
+            return null;
+        }
+
+        @Override
+        public Terms terms(String s) throws IOException {
+            return null;
+        }
+
+        @Override
+        public NumericDocValues getNumericDocValues(String s) throws IOException {
+            return null;
+        }
+
+        @Override
+        public BinaryDocValues getBinaryDocValues(String s) throws IOException {
+            return null;
+        }
+
+        @Override
+        public SortedDocValues getSortedDocValues(String s) throws IOException {
+            return null;
+        }
+
+        @Override
+        public SortedNumericDocValues getSortedNumericDocValues(String s) throws IOException {
+            return null;
+        }
+
+        @Override
+        public SortedSetDocValues getSortedSetDocValues(String s) throws IOException {
+            return null;
+        }
+
+        @Override
+        public NumericDocValues getNormValues(String s) throws IOException {
+            return null;
+        }
+
+        @Override
+        public FloatVectorValues getFloatVectorValues(String s) throws IOException {
+            return null;
+        }
+
+        @Override
+        public ByteVectorValues getByteVectorValues(String s) throws IOException {
+            return null;
+        }
+
+        @Override
+        public void searchNearestVectors(String s, float[] floats, KnnCollector knnCollector, Bits bits) throws IOException {
+
+        }
+
+        @Override
+        public void searchNearestVectors(String s, byte[] bytes, KnnCollector knnCollector, Bits bits) throws IOException {
+
+        }
+
+        @Override
+        public FieldInfos getFieldInfos() {
+            return null;
+        }
+
+        @Override
+        public Bits getLiveDocs() {
+            return null;
+        }
+
+        @Override
+        public PointValues getPointValues(String s) throws IOException {
+            return null;
+        }
+
+        @Override
+        public void checkIntegrity() throws IOException {
+
+        }
+
+        @Override
+        public LeafMetaData getMetaData() {
+            return null;
+        }
+
+        @Override
+        public Fields getTermVectors(int i) throws IOException {
+            return null;
+        }
+
+        @Override
+        public TermVectors termVectors() throws IOException {
+            return null;
+        }
+
+        @Override
+        public int numDocs() {
+            return 999;
+        }
+
+        @Override
+        public int maxDoc() {
+            return 999;
+        }
+
+        @Override
+        public void document(int i, StoredFieldVisitor storedFieldVisitor) throws IOException {
+
+        }
+
+        @Override
+        public StoredFields storedFields() throws IOException {
+            return null;
+        }
+
+        @Override
+        protected void doClose() throws IOException {
+
+        }
+
+        @Override
+        public CacheHelper getReaderCacheHelper() {
+            return null;
+        }
+    }
+
     @Override
     public final PhysicalOperation fieldExtractPhysicalOperation(FieldExtractExec fieldExtractExec, PhysicalOperation source) {
         Layout.Builder layout = source.layout.builder();
         var sourceAttr = fieldExtractExec.sourceAttribute();
-        List<ValuesSourceReaderOperator.ShardContext> readers = shardContexts.stream()
-            .map(s -> new ValuesSourceReaderOperator.ShardContext(s.searcher().getIndexReader(), s::newSourceLoader))
-            .toList();
+        List<ValuesSourceReaderOperator.ShardContext> readers = shardContexts.stream().map(s -> {
+            if (s instanceof KvShardContext kvShardContext) {
+                return new ValuesSourceReaderOperator.ShardContext(
+                    new KvIndexReader(),
+                    s::newSourceLoader,
+                    new ShardId(kvShardContext.ctx.index(), kvShardContext.ctx.getShardId())
+                );
+            } else {
+                return new ValuesSourceReaderOperator.ShardContext(s.searcher().getIndexReader(), s::newSourceLoader);
+            }
+        }).toList();
         List<ValuesSourceReaderOperator.FieldInfo> fields = new ArrayList<>();
         int docChannel = source.layout.get(sourceAttr.id()).channel();
         var docValuesAttrs = fieldExtractExec.docValuesAttributes();
@@ -152,14 +319,26 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
                     querySupplier(esQueryExec.query())
                 );
             } else {
-                luceneFactory = new LuceneSourceOperator.Factory(
-                    shardContexts,
-                    querySupplier(esQueryExec.query()),
-                    context.queryPragmas().dataPartitioning(),
-                    context.queryPragmas().taskConcurrency(),
-                    context.pageSize(rowEstimatedSize),
-                    limit
-                );
+                var firstShardContext = shardContexts.get(0);
+                if (firstShardContext instanceof KvShardContext) {
+                    luceneFactory = new KeyValueOperator.Factory(
+                        shardContexts,
+                        querySupplier(esQueryExec.query()),
+                        context.queryPragmas().dataPartitioning(),
+                        context.queryPragmas().taskConcurrency(),
+                        context.pageSize(rowEstimatedSize),
+                        limit
+                    );
+                } else {
+                    luceneFactory = new LuceneSourceOperator.Factory(
+                        shardContexts,
+                        querySupplier(esQueryExec.query()),
+                        context.queryPragmas().dataPartitioning(),
+                        context.queryPragmas().taskConcurrency(),
+                        context.pageSize(rowEstimatedSize),
+                        limit
+                    );
+                }
             }
         }
         Layout.Builder layout = new Layout.Builder();
@@ -296,6 +475,154 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
                 @Override
                 public SearchLookup lookup() {
                     return ctx.lookup();
+                }
+
+                @Override
+                public Set<String> sourcePaths(String name) {
+                    return ctx.sourcePath(name);
+                }
+
+                @Override
+                public String parentField(String field) {
+                    return ctx.parentPath(field);
+                }
+
+                @Override
+                public FieldNamesFieldMapper.FieldNamesFieldType fieldNames() {
+                    return (FieldNamesFieldMapper.FieldNamesFieldType) ctx.lookup().fieldType(FieldNamesFieldMapper.NAME);
+                }
+            });
+            if (loader == null) {
+                HeaderWarning.addWarning("Field [{}] cannot be retrieved, it is unsupported or not indexed; returning null", name);
+                return BlockLoader.CONSTANT_NULLS;
+            }
+
+            return loader;
+        }
+    }
+
+    public static class KvShardContext implements ShardContext {
+        private final int index;
+        private final SearchExecutionContext ctx;
+        private final AliasFilter aliasFilter;
+        private final SourceLoader sourceLoader;
+        private final Function<Integer, Source> docIdToSource;
+        private final SearchService searchService;
+        private final ShardId shardId;
+
+        public KvShardContext(int index, SearchExecutionContext ctx, AliasFilter aliasFilter, SearchService searchService) {
+            this.index = index;
+            this.ctx = ctx;
+            this.aliasFilter = aliasFilter;
+            this.searchService = searchService;
+            this.shardId = new ShardId(ctx.index(), ctx.getShardId());
+
+            IndicesService indicesService = searchService.getIndicesService();
+            IndexService indexService = indicesService.indexServiceSafe(ctx.index());
+            IndexShard indexShard = indexService.getShard(ctx.getShardId());
+
+            this.docIdToSource = (docId) -> {
+                try {
+                    GetResult result = indexShard.getService()
+                        .get(String.valueOf(docId), null, true, -3, VersionType.INTERNAL, null, false);
+                    return Source.fromMap(result.sourceAsMap(), XContentType.JSON);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            };
+
+            this.sourceLoader = new SourceLoader() {
+                @Override
+                public boolean reordersFieldValues() {
+                    return false;
+                }
+
+                @Override
+                public Leaf leaf(LeafReader reader, int[] docIdsInLeaf) throws IOException {
+                    return (storedFieldLoader, docId) -> docIdToSource.apply(docId);
+                }
+
+                @Override
+                public Set<String> requiredStoredFields() {
+                    return Set.of();
+                }
+            };
+        }
+
+        @Override
+        public int index() {
+            return index;
+        }
+
+        @Override
+        public IndexSearcher searcher() {
+            return ctx.searcher();
+        }
+
+        @Override
+        public Optional<SortAndFormats> buildSort(List<SortBuilder<?>> sorts) throws IOException {
+            return null;
+        }
+
+        @Override
+        public String shardIdentifier() {
+            return ctx.getFullyQualifiedIndex().getName() + ":" + ctx.getShardId();
+        }
+
+        @Override
+        public SourceLoader newSourceLoader() {
+            return sourceLoader;
+        }
+
+        @Override
+        public Query toQuery(QueryBuilder queryBuilder) {
+            return null;
+        }
+
+        @Override
+        public ShardId shardId() {
+            return shardId;
+        }
+
+        @Override
+        public SearchService searchService() {
+            return searchService;
+        }
+
+        @Override
+        public BlockLoader blockLoader(
+            String name,
+            boolean asUnsupportedSource,
+            MappedFieldType.FieldExtractPreference fieldExtractPreference
+        ) {
+            if (asUnsupportedSource) {
+                return BlockLoader.CONSTANT_NULLS;
+            }
+            MappedFieldType fieldType = ctx.getFieldType(name);
+            if (fieldType == null) {
+                // the field does not exist in this context
+                return BlockLoader.CONSTANT_NULLS;
+            }
+            fieldType.alwaysFromSource = true;
+            BlockLoader loader = fieldType.blockLoader(new MappedFieldType.BlockLoaderContext() {
+                @Override
+                public String indexName() {
+                    return ctx.getFullyQualifiedIndex().getName();
+                }
+
+                @Override
+                public MappedFieldType.FieldExtractPreference fieldExtractPreference() {
+                    return fieldExtractPreference;
+                }
+
+                @Override
+                public SearchLookup lookup() {
+                    return new SearchLookup(ctx.lookup(), Collections.emptySet()) {
+                        @Override
+                        public Source getSource(LeafReaderContext ctx, int docId) throws IOException {
+                            return docIdToSource.apply(docId);
+                        }
+                    };
                 }
 
                 @Override

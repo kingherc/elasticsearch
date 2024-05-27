@@ -977,7 +977,7 @@ public final class TextFieldMapper extends FieldMapper {
                     }
                 }
             }
-            if (isStored()) {
+            if (alwaysFromSource == false && isStored()) {
                 return new BlockStoredFieldsReader.BytesFromStringsBlockLoader(name());
             }
             if (isSyntheticSource) {
@@ -998,6 +998,9 @@ public final class TextFieldMapper extends FieldMapper {
          * using whatever
          */
         private BlockSourceReader.LeafIteratorLookup blockReaderDisiLookup(BlockLoaderContext blContext) {
+            if (alwaysFromSource) {
+                return BlockSourceReader.lookupMatchingAll();
+            }
             if (isIndexed()) {
                 if (getTextSearchInfo().hasNorms()) {
                     return BlockSourceReader.lookupFromNorms(name());

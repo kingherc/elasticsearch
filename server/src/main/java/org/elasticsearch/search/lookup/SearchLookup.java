@@ -93,7 +93,7 @@ public class SearchLookup implements SourceProvider {
      * @param searchLookup the existing lookup to create a new one from
      * @param fieldChain the chain of fields that required the field currently being loaded
      */
-    private SearchLookup(SearchLookup searchLookup, Set<String> fieldChain) {
+    protected SearchLookup(SearchLookup searchLookup, Set<String> fieldChain) {
         this.fieldChain = Collections.unmodifiableSet(fieldChain);
         this.sourceProvider = searchLookup.sourceProvider;
         this.fieldTypeLookup = searchLookup.fieldTypeLookup;

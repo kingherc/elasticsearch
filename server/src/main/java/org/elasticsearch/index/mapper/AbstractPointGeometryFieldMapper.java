@@ -181,7 +181,7 @@ public abstract class AbstractPointGeometryFieldMapper<T> extends AbstractGeomet
 
         @Override
         public BlockLoader blockLoader(BlockLoaderContext blContext) {
-            if (blContext.fieldExtractPreference() == DOC_VALUES && hasDocValues()) {
+            if (alwaysFromSource == false && blContext.fieldExtractPreference() == DOC_VALUES && hasDocValues()) {
                 return new BlockDocValuesReader.LongsBlockLoader(name());
             }
             return blockLoaderFromSource(blContext);

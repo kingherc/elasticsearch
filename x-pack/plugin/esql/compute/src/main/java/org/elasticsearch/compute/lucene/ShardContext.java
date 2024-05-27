@@ -8,6 +8,8 @@
 package org.elasticsearch.compute.lucene;
 
 import org.apache.lucene.search.IndexSearcher;
+import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.search.SearchService;
 import org.elasticsearch.search.sort.SortAndFormats;
 import org.elasticsearch.search.sort.SortBuilder;
 
@@ -39,4 +41,12 @@ public interface ShardContext {
      * {@code _cat/shards}.
      */
     String shardIdentifier();
+
+    default ShardId shardId() {
+        return null;
+    }
+
+    default SearchService searchService() {
+        return null;
+    }
 }

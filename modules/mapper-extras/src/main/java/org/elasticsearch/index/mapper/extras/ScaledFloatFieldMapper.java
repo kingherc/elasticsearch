@@ -310,12 +310,12 @@ public class ScaledFloatFieldMapper extends FieldMapper {
                 // Counters are not supported by ESQL so we load them in null
                 return BlockLoader.CONSTANT_NULLS;
             }
-            if (hasDocValues()) {
+            if (alwaysFromSource == false && hasDocValues()) {
                 double scalingFactorInverse = 1d / scalingFactor;
                 return new BlockDocValuesReader.DoublesBlockLoader(name(), l -> l * scalingFactorInverse);
             }
             ValueFetcher valueFetcher = sourceValueFetcher(blContext.sourcePaths(name()));
-            BlockSourceReader.LeafIteratorLookup lookup = isStored() || isIndexed()
+            BlockSourceReader.LeafIteratorLookup lookup = (alwaysFromSource == false && (isStored() || isIndexed()))
                 ? BlockSourceReader.lookupFromFieldNames(blContext.fieldNames(), name())
                 : BlockSourceReader.lookupMatchingAll();
             return new BlockSourceReader.DoublesBlockLoader(valueFetcher, lookup);

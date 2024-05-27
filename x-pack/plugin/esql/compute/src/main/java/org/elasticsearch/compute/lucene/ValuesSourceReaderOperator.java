@@ -12,6 +12,7 @@ import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -30,10 +31,12 @@ import org.elasticsearch.compute.operator.Operator;
 import org.elasticsearch.core.Assertions;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
+import org.elasticsearch.index.fieldvisitor.LeafStoredFieldLoader;
 import org.elasticsearch.index.fieldvisitor.StoredFieldLoader;
 import org.elasticsearch.index.mapper.BlockLoader;
 import org.elasticsearch.index.mapper.BlockLoaderStoredFieldsFromLeafLoader;
 import org.elasticsearch.index.mapper.SourceLoader;
+import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.search.fetch.StoredFieldsSpec;
 import org.elasticsearch.xcontent.XContentBuilder;
 
@@ -105,7 +108,11 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingOperator {
      */
     public record FieldInfo(String name, ElementType type, IntFunction<BlockLoader> blockLoader) {}
 
-    public record ShardContext(IndexReader reader, Supplier<SourceLoader> newSourceLoader) {}
+    public record ShardContext(IndexReader reader, Supplier<SourceLoader> newSourceLoader, ShardId keyValueShardId) {
+        public ShardContext(IndexReader reader, Supplier<SourceLoader> newSourceLoader) {
+            this(reader, newSourceLoader, null);
+        }
+    }
 
     private final FieldWork[] fields;
     private final List<ShardContext> shardContexts;
@@ -221,6 +228,7 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingOperator {
         StoredFieldsSpec storedFieldsSpec = StoredFieldsSpec.NO_REQUIREMENTS;
         List<RowStrideReaderWork> rowStrideReaders = new ArrayList<>(fields.length);
         ComputeBlockLoaderFactory loaderBlockFactory = new ComputeBlockLoaderFactory(blockFactory, docs.count());
+
         LeafReaderContext ctx = ctx(shard, segment);
         try {
             for (int f = 0; f < fields.length; f++) {
@@ -256,8 +264,47 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingOperator {
                 storedFieldLoader = StoredFieldLoader.fromSpec(storedFieldsSpec);
                 trackStoredFields(storedFieldsSpec, false);
             }
+
+            var alwaysFromSourceLeafStoredFieldLoader = new LeafStoredFieldLoader() {
+                private int doc;
+
+                @Override
+                public void advanceTo(int doc) throws IOException {
+                    this.doc = doc;
+                }
+
+                @Override
+                public BytesReference source() {
+                    try {
+                        return shardContexts.get(shard).newSourceLoader.get()
+                            .leaf(ctx.reader(), null)
+                            .source(null, doc)
+                            .internalSourceRef();
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+
+                @Override
+                public String id() {
+                    return String.valueOf(doc);
+                }
+
+                @Override
+                public String routing() {
+                    return null;
+                }
+
+                @Override
+                public Map<String, List<Object>> storedFields() {
+                    return Map.of();
+                }
+            };
+
             BlockLoaderStoredFieldsFromLeafLoader storedFields = new BlockLoaderStoredFieldsFromLeafLoader(
-                storedFieldLoader.getLoader(ctx, null),
+                shardContexts.get(shard).keyValueShardId == null
+                    ? storedFieldLoader.getLoader(ctx, null)
+                    : alwaysFromSourceLeafStoredFieldLoader,
                 storedFieldsSpec.requiresSource() ? shardContexts.get(shard).newSourceLoader.get().leaf(ctx.reader(), null) : null
             );
             for (int p = 0; p < docs.count(); p++) {

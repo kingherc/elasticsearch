@@ -277,6 +277,13 @@ public final class IndexSettings {
         Property.IndexScope
     );
 
+    public static final Setting<Integer> INDEX_KEY_VALUE_SETTING = Setting.intSetting(
+        "index.key_value",
+        -1,
+        Property.Final,
+        Property.IndexScope
+    );
+
     public static final TimeValue DEFAULT_REFRESH_INTERVAL = new TimeValue(1, TimeUnit.SECONDS);
     public static final Setting<TimeValue> NODE_DEFAULT_REFRESH_INTERVAL_SETTING = Setting.timeSetting(
         "node._internal.default_refresh_interval",
@@ -737,6 +744,7 @@ public final class IndexSettings {
 
     private volatile boolean warmerEnabled;
     private volatile int maxResultWindow;
+    private volatile int keyValue;
     private volatile int maxInnerResultWindow;
     private volatile int maxRescoreWindow;
     private volatile int maxDocvalueFields;
@@ -879,6 +887,7 @@ public final class IndexSettings {
         retentionLeaseMillis = scopedSettings.get(INDEX_SOFT_DELETES_RETENTION_LEASE_PERIOD_SETTING).millis();
         warmerEnabled = scopedSettings.get(INDEX_WARMER_ENABLED_SETTING);
         maxResultWindow = scopedSettings.get(MAX_RESULT_WINDOW_SETTING);
+        keyValue = scopedSettings.get(INDEX_KEY_VALUE_SETTING);
         maxInnerResultWindow = scopedSettings.get(MAX_INNER_RESULT_WINDOW_SETTING);
         maxRescoreWindow = scopedSettings.get(MAX_RESCORE_WINDOW_SETTING);
         maxDocvalueFields = scopedSettings.get(MAX_DOCVALUE_FIELDS_SEARCH_SETTING);
@@ -1272,6 +1281,10 @@ public final class IndexSettings {
      */
     public int getMaxResultWindow() {
         return this.maxResultWindow;
+    }
+
+    public int getKeyValue() {
+        return this.keyValue;
     }
 
     private void setMaxResultWindow(int maxResultWindow) {

@@ -92,13 +92,33 @@ public abstract class LuceneOperator extends SourceOperator {
             DataPartitioning dataPartitioning,
             int taskConcurrency,
             int limit,
-            ScoreMode scoreMode
+            ScoreMode scoreMode,
+            LuceneSliceQueue sliceQueue
         ) {
             this.limit = limit;
             this.dataPartitioning = dataPartitioning;
             var weightFunction = weightFunction(queryFunction, scoreMode);
-            this.sliceQueue = LuceneSliceQueue.create(contexts, weightFunction, dataPartitioning, taskConcurrency);
-            this.taskConcurrency = Math.min(sliceQueue.totalSlices(), taskConcurrency);
+            this.sliceQueue = sliceQueue;
+            this.taskConcurrency = Math.min(sliceQueue == null ? taskConcurrency : sliceQueue.totalSlices(), taskConcurrency);
+        }
+
+        protected Factory(
+            List<? extends ShardContext> contexts,
+            Function<ShardContext, Query> queryFunction,
+            DataPartitioning dataPartitioning,
+            int taskConcurrency,
+            int limit,
+            ScoreMode scoreMode
+        ) {
+            this(
+                contexts,
+                queryFunction,
+                dataPartitioning,
+                taskConcurrency,
+                limit,
+                scoreMode,
+                LuceneSliceQueue.create(contexts, weightFunction(queryFunction, scoreMode), dataPartitioning, taskConcurrency)
+            );
         }
 
         public final int taskConcurrency() {

@@ -257,11 +257,11 @@ public class BooleanFieldMapper extends FieldMapper {
 
         @Override
         public BlockLoader blockLoader(BlockLoaderContext blContext) {
-            if (hasDocValues()) {
+            if (alwaysFromSource == false && hasDocValues()) {
                 return new BlockDocValuesReader.BooleansBlockLoader(name());
             }
             ValueFetcher fetcher = sourceValueFetcher(blContext.sourcePaths(name()));
-            BlockSourceReader.LeafIteratorLookup lookup = isIndexed() || isStored()
+            BlockSourceReader.LeafIteratorLookup lookup = (alwaysFromSource == false && (isIndexed() || isStored()))
                 ? BlockSourceReader.lookupFromFieldNames(blContext.fieldNames(), name())
                 : BlockSourceReader.lookupMatchingAll();
             return new BlockSourceReader.BooleansBlockLoader(fetcher, lookup);

@@ -69,6 +69,7 @@ public abstract class MappedFieldType {
     private final boolean isStored;
     private final TextSearchInfo textSearchInfo;
     private final Map<String, String> meta;
+    public boolean alwaysFromSource = false;
 
     public MappedFieldType(
         String name,

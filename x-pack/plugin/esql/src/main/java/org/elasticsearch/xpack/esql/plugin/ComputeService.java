@@ -400,13 +400,24 @@ public class ComputeService {
         List<EsPhysicalOperationProviders.ShardContext> contexts = new ArrayList<>(context.searchContexts.size());
         for (int i = 0; i < context.searchContexts.size(); i++) {
             SearchContext searchContext = context.searchContexts.get(i);
-            contexts.add(
-                new EsPhysicalOperationProviders.DefaultShardContext(
-                    i,
-                    searchContext.getSearchExecutionContext(),
-                    searchContext.request().getAliasFilter()
-                )
-            );
+            if (searchContext.indexShard().indexSettings().getKeyValue() > 0) {
+                contexts.add(
+                    new EsPhysicalOperationProviders.KvShardContext(
+                        i,
+                        searchContext.getSearchExecutionContext(),
+                        searchContext.request().getAliasFilter(),
+                        searchService
+                    )
+                );
+            } else {
+                contexts.add(
+                    new EsPhysicalOperationProviders.DefaultShardContext(
+                        i,
+                        searchContext.getSearchExecutionContext(),
+                        searchContext.request().getAliasFilter()
+                    )
+                );
+            }
         }
         final List<Driver> drivers;
         try {
