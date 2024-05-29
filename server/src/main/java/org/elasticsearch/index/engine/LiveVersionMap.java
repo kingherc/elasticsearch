@@ -15,10 +15,8 @@ import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.common.util.concurrent.KeyedLock;
 import org.elasticsearch.core.Releasable;
-import org.elasticsearch.index.mapper.Uid;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
@@ -308,13 +306,6 @@ public final class LiveVersionMap implements ReferenceManager.RefreshListener, A
      */
     VersionValue getUnderLock(final BytesRef uid) {
         return getUnderLock(uid, maps);
-    }
-
-    public int[] getKvKeysUnderLock() {
-        assert maps.old.isEmpty();
-        int[] keys = maps.current.getMap().keySet().stream().mapToInt(br -> Integer.parseInt(Uid.decodeId(br.bytes))).toArray();
-        Arrays.sort(keys);
-        return keys;
     }
 
     private VersionValue getUnderLock(final BytesRef uid, Maps currentMaps) {

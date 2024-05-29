@@ -62,7 +62,13 @@ import org.elasticsearch.transport.TransportRequestHandler;
 import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.esql.action.EsqlQueryAction;
+import org.elasticsearch.xpack.esql.core.expression.Expression;
+import org.elasticsearch.xpack.esql.core.expression.FieldAttribute;
+import org.elasticsearch.xpack.esql.core.expression.Literal;
+import org.elasticsearch.xpack.esql.core.plan.logical.Filter;
 import org.elasticsearch.xpack.esql.enrich.EnrichLookupService;
+import org.elasticsearch.xpack.esql.expression.predicate.operator.comparison.In;
+import org.elasticsearch.xpack.esql.plan.logical.EsRelation;
 import org.elasticsearch.xpack.esql.plan.physical.ExchangeSinkExec;
 import org.elasticsearch.xpack.esql.plan.physical.ExchangeSourceExec;
 import org.elasticsearch.xpack.esql.plan.physical.FragmentExec;
@@ -74,6 +80,7 @@ import org.elasticsearch.xpack.esql.planner.PlannerUtils;
 import org.elasticsearch.xpack.esql.session.EsqlConfiguration;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -400,13 +407,37 @@ public class ComputeService {
         List<EsPhysicalOperationProviders.ShardContext> contexts = new ArrayList<>(context.searchContexts.size());
         for (int i = 0; i < context.searchContexts.size(); i++) {
             SearchContext searchContext = context.searchContexts.get(i);
-            if (searchContext.indexShard().indexSettings().getKeyValue() > 0) {
+            if (Boolean.parseBoolean(searchContext.indexShard().indexSettings().getSettings().get("index.kv"))) {
+                List<Integer> ids = new ArrayList<>();
+                plan.forEachDown(p -> {
+                    if (p instanceof FragmentExec fragmentExec) {
+                        fragmentExec.fragment().forEachDown(f -> {
+                            if (f instanceof Filter filter
+                                && filter.child() instanceof EsRelation esRelation
+                                && esRelation.index().name().equals(searchContext.indexShard().indexSettings().getIndex().getName())
+                                && filter.condition() instanceof In in
+                                && in.value() instanceof FieldAttribute attribute
+                                && attribute.name().equals("myid")) {
+                                for (Expression expression : in.list()) {
+                                    if (expression instanceof Literal literal) {
+                                        ids.add((Integer) literal.value());
+                                    }
+                                }
+                            }
+                        });
+                    }
+                });
+                int[] filterIds = ids.isEmpty() ? null : ids.stream().mapToInt(n -> n).toArray();
+                if (filterIds != null) {
+                    Arrays.sort(filterIds);
+                }
                 contexts.add(
                     new EsPhysicalOperationProviders.KvShardContext(
                         i,
                         searchContext.getSearchExecutionContext(),
                         searchContext.request().getAliasFilter(),
-                        searchService
+                        searchService,
+                        filterIds
                     )
                 );
             } else {

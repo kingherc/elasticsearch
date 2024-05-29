@@ -49,4 +49,8 @@ public interface ShardContext {
     default SearchService searchService() {
         return null;
     }
+
+    default int[] filterIds() {
+        return null;
+    }
 }

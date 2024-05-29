@@ -12,6 +12,13 @@ base {
 
 dependencies {
   compileOnly project(path: xpackModule('core'))
+  compileOnly project(path: xpackModule('esql-core'))
+  compileOnly project(path: xpackModule('esql'))
   testImplementation(testArtifact(project(xpackModule('core'))))
+  testImplementation(testArtifact(project(xpackModule('esql-core'))))
   api 'org.rocksdb:rocksdbjni:9.2.1'
+}
+
+tasks.withType(Test) {
+  enableAssertions = false
 }

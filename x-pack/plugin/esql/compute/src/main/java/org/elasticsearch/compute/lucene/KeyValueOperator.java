@@ -19,7 +19,6 @@ import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.SourceOperator;
 import org.elasticsearch.core.Releasables;
 import org.elasticsearch.index.IndexService;
-import org.elasticsearch.index.engine.InternalEngine;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.indices.IndicesService;
@@ -86,14 +85,16 @@ public class KeyValueOperator extends SourceOperator {
             IntBlock leaf = null;
             IntVector docs = null;
             try {
-                IndicesService indicesService = context.searchService().getIndicesService();
-                ShardId shardId = context.shardId();
-                IndexService indexService = indicesService.indexServiceSafe(shardId.getIndex());
-                IndexShard indexShard = indexService.getShard(shardId.getId());
-                InternalEngine internalEngine = (InternalEngine) indexShard.getEngineOrNull();
-                int[] keys = internalEngine.getKvKeys();
-                docs = blockFactory.newIntArrayVector(keys, keys.length);
+                int[] keys = context.filterIds();
+                if (keys == null) {
+                    IndicesService indicesService = context.searchService().getIndicesService();
+                    ShardId shardId = context.shardId();
+                    IndexService indexService = indicesService.indexServiceSafe(shardId.getIndex());
+                    IndexShard indexShard = indexService.getShard(shardId.getId());
+                    keys = indexShard.getEngineOrNull().getAllKeys();
+                }
 
+                docs = blockFactory.newIntArrayVector(keys, keys.length);
                 currentPagePos += docs.getPositionCount();
                 shard = blockFactory.newConstantIntBlockWith(context.index(), currentPagePos);
                 leaf = blockFactory.newConstantIntBlockWith(0, currentPagePos);

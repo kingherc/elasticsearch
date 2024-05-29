@@ -73,10 +73,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * (e.g. access to other stored fields) etc., this reader will index the document
  * into an in-memory Lucene segment that is created on-demand.
  */
-final class TranslogDirectoryReader extends DirectoryReader {
+public final class TranslogDirectoryReader extends DirectoryReader {
     private final TranslogLeafReader leafReader;
 
-    TranslogDirectoryReader(
+    public TranslogDirectoryReader(
         ShardId shardId,
         Translog.Index operation,
         MappingLookup mappingLookup,

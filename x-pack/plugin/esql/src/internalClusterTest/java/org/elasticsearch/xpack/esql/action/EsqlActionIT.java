@@ -11,9 +11,7 @@ import org.elasticsearch.Build;
 import org.elasticsearch.action.admin.cluster.settings.ClusterUpdateSettingsRequest;
 import org.elasticsearch.action.admin.indices.alias.IndicesAliasesRequest;
 import org.elasticsearch.action.admin.indices.alias.IndicesAliasesRequestBuilder;
-import org.elasticsearch.action.bulk.BulkItemResponse;
 import org.elasticsearch.action.bulk.BulkRequestBuilder;
-import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.support.WriteRequest;
@@ -67,7 +65,6 @@ import static java.util.Comparator.reverseOrder;
 import static org.elasticsearch.test.ListMatcher.matchesList;
 import static org.elasticsearch.test.MapMatcher.assertMap;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
-import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertNoFailures;
 import static org.elasticsearch.xpack.esql.EsqlTestUtils.getValuesList;
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.anyOf;
@@ -99,82 +96,6 @@ public class EsqlActionIT extends AbstractEsqlIntegTestCase {
             .put(super.nodeSettings(nodeOrdinal, otherSettings))
             .put("cluster.routing.rebalance.enable", "none")
             .build();
-    }
-
-    public void testKeyValue() {
-        internalCluster().ensureAtLeastNumDataNodes(1);
-        int keyValueSetting = 1; // -1 for regular elasticsearch, 1 for key-value index
-
-        String indexName = "myindex";
-        int numOfShards = randomIntBetween(1, 1);
-        int numOfReplicas = randomIntBetween(0, 0);
-        assertAcked(
-            indicesAdmin().prepareCreate(indexName)
-                .setSettings(
-                    indexSettings(numOfShards, numOfReplicas).put(IndexSettings.INDEX_REFRESH_INTERVAL_SETTING.getKey(), -1)
-                        .put(IndexSettings.INDEX_KEY_VALUE_SETTING.getKey(), keyValueSetting)
-                        .build()
-                )
-        );
-        ensureGreen(indexName);
-
-        var bulkRequest = client().prepareBulk();
-        int numOfIndexRequests = randomIntBetween(2, 2);
-        for (int i = 0; i < numOfIndexRequests; i++) {
-            var indexRequest = new IndexRequest(indexName).source("myint", 900 + i, "mytext", "myvalue" + i);
-            indexRequest.id(String.valueOf(i));
-            bulkRequest.add(indexRequest);
-        }
-        BulkResponse response = bulkRequest.get();
-        assertNoFailures(response);
-
-        List<String> ids = Arrays.stream(response.getItems()).map(BulkItemResponse::getId).toList();
-        for (String id : ids) {
-            var getResponse = client().prepareGet().setIndex(indexName).setId(id).get();
-            // Fetching response for ID 0:
-            // {"_index":"myindex","_id":"0","_version":1,"_seq_no":0,"_primary_term":1,"found":true,"_source":{"myint":900,"mytext":"myvalue0"}}
-            // Fetching response for ID 1:
-            // {"_index":"myindex","_id":"1","_version":1,"_seq_no":1,"_primary_term":1,"found":true,"_source":{"myint":901,"mytext":"myvalue1"}}
-            logger.warn("Fetching response for ID {}: {}", id, getResponse);
-            assertTrue(getResponse.isExists());
-        }
-
-        if (keyValueSetting < 0) {
-            refresh("myindex");
-        }
-
-        logger.warn("Running ESQL");
-
-        EsqlQueryRequest request = EsqlQueryRequest.syncEsqlQueryRequest();
-        request.query("from myindex");
-        try (EsqlQueryResponse results = run(request)) {
-            logger.warn("ESQL results: [{}]", results);
-            // ESQL results:
-            // [{"columns":[{"name":"myint","type":"long"},{"name":"mytext","type":"text"},{"name":"mytext.keyword","type":"keyword"}],"values":[[900,"myvalue0","myvalue0"],[901,"myvalue1","myvalue1"]]}]
-        }
-
-        EsqlQueryRequest requestSum = EsqlQueryRequest.syncEsqlQueryRequest();
-        requestSum.query("from myindex | STATS SUM(myint)");
-        try (EsqlQueryResponse results = run(requestSum)) {
-            logger.warn("ESQL results: [{}]", results);
-            // ESQL results: [{"columns":[{"name":"SUM(myint)","type":"long"}],"values":[[1801]]}]
-        }
-
-        EsqlQueryRequest requestSource = EsqlQueryRequest.syncEsqlQueryRequest();
-        requestSource.query("from myindex METADATA _source, _id | keep _source, _id");
-        try (EsqlQueryResponse results = run(requestSource)) {
-            logger.warn("ESQL results: [{}]", results);
-            // ESQL resultsSource:
-            // [{"columns":[{"name":"_source","type":"_source"}],"values":[[{"myint":900,"mytext":"myvalue0"}],[{"myint":901,"mytext":"myvalue1"}]]}]
-        }
-
-        EsqlQueryRequest requestById = EsqlQueryRequest.syncEsqlQueryRequest();
-        requestById.query("from myindex METADATA _id | WHERE _id == \"1\"");
-        try (EsqlQueryResponse results = run(requestById)) {
-            logger.warn("ESQL results: [{}]", results);
-            // ESQL results:
-            // [{"columns":[{"name":"myint","type":"long"},{"name":"mytext","type":"text"},{"name":"mytext.keyword","type":"keyword"},{"name":"_id","type":"keyword"}],"values":[[901,"myvalue1","myvalue1","1"]]}]
-        }
     }
 
     public void testProjectConstant() {

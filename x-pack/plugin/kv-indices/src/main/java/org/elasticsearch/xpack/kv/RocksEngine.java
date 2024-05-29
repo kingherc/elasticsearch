@@ -8,25 +8,37 @@
 
 package org.elasticsearch.xpack.kv;
 
+import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.SegmentInfos;
+import org.apache.lucene.index.Term;
 import org.apache.lucene.search.ReferenceManager;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.lucene.index.ElasticsearchDirectoryReader;
 import org.elasticsearch.common.settings.Setting;
+import org.elasticsearch.common.util.Maps;
+import org.elasticsearch.core.Assertions;
+import org.elasticsearch.index.cache.query.TrivialQueryCachingPolicy;
 import org.elasticsearch.index.engine.CommitStats;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.engine.EngineConfig;
 import org.elasticsearch.index.engine.EngineException;
 import org.elasticsearch.index.engine.SafeCommitInfo;
 import org.elasticsearch.index.engine.Segment;
+import org.elasticsearch.index.engine.TranslogDirectoryReader;
 import org.elasticsearch.index.mapper.DocumentParser;
+import org.elasticsearch.index.mapper.IdFieldMapper;
 import org.elasticsearch.index.mapper.MappingLookup;
+import org.elasticsearch.index.mapper.ParsedDocument;
+import org.elasticsearch.index.mapper.SourceToParse;
+import org.elasticsearch.index.mapper.Uid;
 import org.elasticsearch.index.seqno.SeqNoStats;
 import org.elasticsearch.index.shard.ShardLongFieldRange;
 import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.index.translog.TranslogStats;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
+import org.elasticsearch.search.lookup.Source;
 import org.elasticsearch.search.suggest.completion.CompletionStats;
 import org.rocksdb.FlushOptions;
 import org.rocksdb.RocksDB;
@@ -34,13 +46,19 @@ import org.rocksdb.RocksDBException;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.stream.Stream;
 
 public class RocksEngine extends Engine {
     public static final Setting<Boolean> INDEX_KV = Setting.boolSetting("index.kv", false, Setting.Property.IndexScope);
@@ -53,8 +71,16 @@ public class RocksEngine extends Engine {
         super(engineConfig);
         RocksDB.loadLibrary();
         try {
+            try (Stream<Path> pathStream = Files.walk(Path.of(engineConfig.getShardId().toString()))) {
+                pathStream.sorted(Comparator.reverseOrder()).map(Path::toFile).forEach(f -> f.delete());
+            }
+        } catch (Exception e) {
+            logger.warn("Could not delete key value directory", e);
+        }
+        try {
+
             this.db = RocksDB.open(engineConfig.getShardId().toString());
-        } catch (RocksDBException e) {
+        } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
@@ -99,24 +125,45 @@ public class RocksEngine extends Engine {
 
     }
 
+    public static byte[] intToBytes(int n) {
+        return new byte[] { (byte) (n >>> 24), (byte) (n >>> 16), (byte) (n >>> 8), (byte) n };
+    }
+
+    public static int intFromBytes(byte[] b) {
+        return ((b[0] & 0xFF) << 24) | ((b[1] & 0xFF) << 16) | ((b[2] & 0xFF) << 8) | ((b[3] & 0xFF) << 0);
+    }
+
     @Override
     public IndexResult index(Index index) throws IOException {
+        byte[] key = intToBytes(Integer.parseInt(index.id()));
+        byte[] value = index.source().array();
+        // var s = new SourceToParse(index.id(), BytesReference.fromByteBuffer(ByteBuffer.wrap(value)), XContentType.JSON);
+        var s = Source.fromBytes(BytesReference.fromByteBuffer(ByteBuffer.wrap(value)));
         try {
-            db.put(index.id().getBytes(), index.source().array());
-            logger.info("--> added {}", Arrays.toString(db.get(index.id().getBytes())));
+            db.put(key, value);
+            if (Assertions.ENABLED) {
+                logger.info(
+                    "--> added for id {}: key {} source {} value {} contents {}",
+                    index.id(),
+                    Arrays.toString(key),
+                    s.source(),
+                    Arrays.toString(value),
+                    Arrays.toString(db.get(key))
+                );
+            }
         } catch (RocksDBException e) {
             throw new IOException(e);
         }
         var seqNo = currentSeqNo.incrementAndGet();
         IndexResult indexResult = new IndexResult(1, 1, seqNo, true, index.id());
-        indexResult.setTranslogLocation(new Translog.Location(0, 0, 0));
+        indexResult.setTranslogLocation(new Translog.Location(0, seqNo, 0));
         return indexResult;
     }
 
     @Override
     public DeleteResult delete(Delete delete) throws IOException {
         try {
-            db.delete(delete.id().getBytes());
+            db.delete(intToBytes(Integer.parseInt(delete.id())));
         } catch (RocksDBException e) {
             throw new IOException(e);
         }
@@ -135,7 +182,39 @@ public class RocksEngine extends Engine {
         DocumentParser documentParser,
         Function<Searcher, Searcher> searcherWrapper
     ) {
-        throw new UnsupportedOperationException();
+        try {
+            var s = getSourceOf(get.id());
+
+            var sourceToParse = new SourceToParse(get.id(), s.internalSourceRef(), s.sourceContentType());
+            ParsedDocument parsedDocument = documentParser.parseDocument(sourceToParse, mappingLookup);
+
+            Term uid = new Term(IdFieldMapper.NAME, Uid.encodeId(get.id()));
+            Index fakeIndexOp = new Index(uid, 1, parsedDocument);
+            IndexResult indexResult = new IndexResult(1, 1, 1, true, get.id());
+            indexResult.setTranslogLocation(new Translog.Location(0, 1, 0));
+            Translog.Index fakeTranslogIndexOp = new Translog.Index(fakeIndexOp, indexResult);
+
+            final TranslogDirectoryReader inMemoryReader = new TranslogDirectoryReader(
+                shardId,
+                fakeTranslogIndexOp,
+                mappingLookup,
+                documentParser,
+                config(),
+                () -> {}
+            );
+            final Engine.Searcher searcher = new Engine.Searcher(
+                "kv_get",
+                ElasticsearchDirectoryReader.wrap(inMemoryReader, shardId),
+                config().getSimilarity(),
+                null /*query cache disabled*/,
+                TrivialQueryCachingPolicy.NEVER,
+                inMemoryReader
+            );
+            final Searcher wrappedSearcher = searcherWrapper.apply(searcher);
+            return getFromSearcher(get, wrappedSearcher, true);
+        } catch (IOException e) {
+            throw new EngineException(shardId, "failed to read operation from kv", e);
+        }
     }
 
     public byte[] getBytes(byte[] id) {
@@ -151,8 +230,64 @@ public class RocksEngine extends Engine {
     }
 
     @Override
+    public Source getSourceOf(String id) {
+        byte[] key = intToBytes(Integer.parseInt(id));
+        byte[] value = getBytes(key);
+        var s = Source.fromBytes(BytesReference.fromByteBuffer(ByteBuffer.wrap(value)));
+        if (Assertions.ENABLED) {
+            logger.info("--> fetched for id {} map {} value {}", id, s.source(), Arrays.toString(value));
+        }
+        return s;
+    }
+
+    @Override
+    public Map<Integer, Source> getSourcesOf(int[] ids) {
+        try {
+            List<byte[]> keys = Arrays.stream(ids).mapToObj(i -> intToBytes(i)).toList();
+            List<byte[]> values = db.multiGetAsList(keys);
+            Map<Integer, Source> map = Maps.newMapWithExpectedSize(ids.length);
+            for (int i = 0; i < ids.length; i++) {
+                var s = Source.fromBytes(BytesReference.fromByteBuffer(ByteBuffer.wrap(values.get(i))));
+                map.put(ids[i], s);
+            }
+            if (Assertions.ENABLED) {
+                logger.info(
+                    "--> fetched multiple map {}",
+                    map.entrySet().stream().map(e -> e.getKey() + " " + e.getValue().source()).toList()
+                );
+            }
+            return map;
+        } catch (RocksDBException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public int[] getAllKeys() {
+        var list = new ArrayList<Integer>();
+        var it = db.newIterator();
+        it.seekToFirst();
+        while (it.isValid()) {
+            byte[] key = it.key();
+            int id = intFromBytes(key);
+            list.add(id);
+            it.next();
+        }
+        it.close();
+        int[] result = list.stream().mapToInt(i -> i).toArray();
+        if (Assertions.ENABLED) {
+            logger.info("--> got all keys {}", result);
+        }
+        return result;
+    }
+
+    @Override
     protected ReferenceManager<ElasticsearchDirectoryReader> getReferenceManager(SearcherScope scope) {
-        return new ReferenceManager<>() {
+        var rm = new ReferenceManager<ElasticsearchDirectoryReader>() {
+            public void changeCurrent(ElasticsearchDirectoryReader reference) {
+                this.current = reference;
+            }
+
             @Override
             protected void decRef(ElasticsearchDirectoryReader reference) throws IOException {
 
@@ -160,12 +295,12 @@ public class RocksEngine extends Engine {
 
             @Override
             protected ElasticsearchDirectoryReader refreshIfNeeded(ElasticsearchDirectoryReader referenceToRefresh) throws IOException {
-                return null;
+                return referenceToRefresh;
             }
 
             @Override
             protected boolean tryIncRef(ElasticsearchDirectoryReader reference) throws IOException {
-                return false;
+                return true;
             }
 
             @Override
@@ -173,6 +308,14 @@ public class RocksEngine extends Engine {
                 return 1;
             }
         };
+
+        try {
+            rm.changeCurrent(ElasticsearchDirectoryReader.wrap(DirectoryReader.open(store.directory()), shardId));
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        return rm;
     }
 
     @Override
@@ -182,7 +325,12 @@ public class RocksEngine extends Engine {
 
     @Override
     public void asyncEnsureTranslogSynced(Translog.Location location, Consumer<Exception> listener) {
-        listener.accept(null);
+        try {
+            db.syncWal();
+            listener.accept(null);
+        } catch (RocksDBException e) {
+            listener.accept(e);
+        }
     }
 
     @Override
@@ -290,7 +438,7 @@ public class RocksEngine extends Engine {
     @Override
     public void writeIndexingBuffer() throws IOException {
         try {
-            db.flushWal(false);
+            db.flush(new FlushOptions().setWaitForFlush(false));
         } catch (RocksDBException e) {
             throw new RuntimeException(e);
         }

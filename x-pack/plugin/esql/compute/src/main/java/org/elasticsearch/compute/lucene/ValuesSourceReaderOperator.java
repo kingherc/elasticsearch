@@ -228,7 +228,6 @@ public class ValuesSourceReaderOperator extends AbstractPageMappingOperator {
         StoredFieldsSpec storedFieldsSpec = StoredFieldsSpec.NO_REQUIREMENTS;
         List<RowStrideReaderWork> rowStrideReaders = new ArrayList<>(fields.length);
         ComputeBlockLoaderFactory loaderBlockFactory = new ComputeBlockLoaderFactory(blockFactory, docs.count());
-
         LeafReaderContext ctx = ctx(shard, segment);
         try {
             for (int f = 0; f < fields.length; f++) {

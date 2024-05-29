@@ -47,8 +47,6 @@ import org.elasticsearch.compute.operator.SourceOperator;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.IndexService;
-import org.elasticsearch.index.VersionType;
-import org.elasticsearch.index.get.GetResult;
 import org.elasticsearch.index.mapper.BlockLoader;
 import org.elasticsearch.index.mapper.FieldNamesFieldMapper;
 import org.elasticsearch.index.mapper.MappedFieldType;
@@ -67,7 +65,6 @@ import org.elasticsearch.search.lookup.SearchLookup;
 import org.elasticsearch.search.lookup.Source;
 import org.elasticsearch.search.sort.SortAndFormats;
 import org.elasticsearch.search.sort.SortBuilder;
-import org.elasticsearch.xcontent.XContentType;
 import org.elasticsearch.xpack.esql.core.expression.Attribute;
 import org.elasticsearch.xpack.esql.core.expression.Expression;
 import org.elasticsearch.xpack.esql.core.type.DataType;
@@ -84,6 +81,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
@@ -122,6 +120,15 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
 
     // Only useful for the max doc
     protected class KvIndexReader extends LeafReader {
+
+        private final int numDocs;
+        private final int maxDoc;
+
+        public KvIndexReader(int numDocs, int maxDoc) {
+            super();
+            this.numDocs = numDocs;
+            this.maxDoc = maxDoc;
+        }
 
         @Override
         public CacheHelper getCoreCacheHelper() {
@@ -220,12 +227,12 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
 
         @Override
         public int numDocs() {
-            return 999;
+            return numDocs;
         }
 
         @Override
         public int maxDoc() {
-            return 999;
+            return maxDoc;
         }
 
         @Override
@@ -255,8 +262,14 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
         var sourceAttr = fieldExtractExec.sourceAttribute();
         List<ValuesSourceReaderOperator.ShardContext> readers = shardContexts.stream().map(s -> {
             if (s instanceof KvShardContext kvShardContext) {
+                int numDocs = 1000;
+                int maxDoc = 1000;
+                if (kvShardContext.filterIds != null) {
+                    numDocs = kvShardContext.filterIds.length;
+                    maxDoc = kvShardContext.filterIds[numDocs - 1] + 1;
+                }
                 return new ValuesSourceReaderOperator.ShardContext(
-                    new KvIndexReader(),
+                    new KvIndexReader(numDocs, maxDoc),
                     s::newSourceLoader,
                     new ShardId(kvShardContext.ctx.index(), kvShardContext.ctx.getShardId())
                 );
@@ -509,25 +522,38 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
         private final Function<Integer, Source> docIdToSource;
         private final SearchService searchService;
         private final ShardId shardId;
+        private final int[] filterIds;
+        private final Map<Integer, Source> filterIdsSources;
 
-        public KvShardContext(int index, SearchExecutionContext ctx, AliasFilter aliasFilter, SearchService searchService) {
+        public KvShardContext(
+            int index,
+            SearchExecutionContext ctx,
+            AliasFilter aliasFilter,
+            SearchService searchService,
+            int[] filterIds
+        ) {
             this.index = index;
             this.ctx = ctx;
             this.aliasFilter = aliasFilter;
             this.searchService = searchService;
             this.shardId = new ShardId(ctx.index(), ctx.getShardId());
+            this.filterIds = filterIds;
 
             IndicesService indicesService = searchService.getIndicesService();
             IndexService indexService = indicesService.indexServiceSafe(ctx.index());
             IndexShard indexShard = indexService.getShard(ctx.getShardId());
 
+            if (filterIds != null) {
+                filterIdsSources = indexShard.getEngineOrNull().getSourcesOf(filterIds);
+            } else {
+                filterIdsSources = null;
+            }
+
             this.docIdToSource = (docId) -> {
-                try {
-                    GetResult result = indexShard.getService()
-                        .get(String.valueOf(docId), null, true, -3, VersionType.INTERNAL, null, false);
-                    return Source.fromMap(result.sourceAsMap(), XContentType.JSON);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
+                if (filterIdsSources != null) {
+                    return filterIdsSources.get(docId);
+                } else {
+                    return indexShard.getEngineOrNull().getSourceOf(String.valueOf(docId));
                 }
             };
 
@@ -547,6 +573,11 @@ public class EsPhysicalOperationProviders extends AbstractPhysicalOperationProvi
                     return Set.of();
                 }
             };
+        }
+
+        @Override
+        public int[] filterIds() {
+            return filterIds;
         }
 
         @Override

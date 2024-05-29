@@ -119,7 +119,6 @@ public final class IndexScopedSettings extends AbstractScopedSettings {
         IndexSettings.MAX_NGRAM_DIFF_SETTING,
         IndexSettings.MAX_SHINGLE_DIFF_SETTING,
         IndexSettings.MAX_RESCORE_WINDOW_SETTING,
-        IndexSettings.INDEX_KEY_VALUE_SETTING,
         IndexSettings.MAX_ANALYZED_OFFSET_SETTING,
         IndexSettings.WEIGHT_MATCHES_MODE_ENABLED_SETTING,
         IndexSettings.MAX_TERMS_COUNT_SETTING,

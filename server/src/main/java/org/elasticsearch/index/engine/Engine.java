@@ -74,6 +74,7 @@ import org.elasticsearch.index.shard.ShardLongFieldRange;
 import org.elasticsearch.index.store.Store;
 import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.index.translog.TranslogStats;
+import org.elasticsearch.search.lookup.Source;
 import org.elasticsearch.search.suggest.completion.CompletionStats;
 import org.elasticsearch.transport.Transports;
 
@@ -812,6 +813,18 @@ public abstract class Engine implements Closeable {
         } finally {
             Releasables.close(releasable);
         }
+    }
+
+    public int[] getAllKeys() {
+        return null;
+    }
+
+    public Source getSourceOf(String id) {
+        return null;
+    }
+
+    public Map<Integer, Source> getSourcesOf(int[] ids) {
+        return null;
     }
 
     protected abstract ReferenceManager<ElasticsearchDirectoryReader> getReferenceManager(SearcherScope scope);
