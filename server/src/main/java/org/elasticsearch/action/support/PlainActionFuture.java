@@ -10,7 +10,6 @@
 package org.elasticsearch.action.support;
 
 import org.elasticsearch.ElasticsearchException;
-import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionFuture;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.cluster.service.ClusterApplierService;
@@ -370,14 +369,14 @@ public class PlainActionFuture<T> implements ActionFuture<T>, ActionListener<T> 
     }
 
     private boolean assertCompleteAllowed() {
-//        Thread waiter = sync.getFirstQueuedThread();
-//        assert waiter == null || allowedExecutors(waiter, Thread.currentThread())
-//            : "cannot complete future on thread "
-//                + Thread.currentThread()
-//                + " with waiter on thread "
-//                + waiter
-//                + ", could deadlock if pool was full\n"
-//                + ExceptionsHelper.formatStackTrace(waiter.getStackTrace());
+        // Thread waiter = sync.getFirstQueuedThread();
+        // assert waiter == null || allowedExecutors(waiter, Thread.currentThread())
+        // : "cannot complete future on thread "
+        // + Thread.currentThread()
+        // + " with waiter on thread "
+        // + waiter
+        // + ", could deadlock if pool was full\n"
+        // + ExceptionsHelper.formatStackTrace(waiter.getStackTrace());
         return true;
     }
 

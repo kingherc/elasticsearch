@@ -70,7 +70,6 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
     protected final SearchTransportService searchTransportService;
     private final Executor executor;
     private final ActionListener<SearchResponse> listener;
-    private final AtomicBoolean phaseFailed = new AtomicBoolean(false);
     protected final SearchRequest request;
 
     /**
@@ -601,7 +600,6 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         if (allowPartialResults == false && failures.length > 0) {
             raisePhaseFailure(new SearchPhaseExecutionException("", "Shard failures", null, failures));
         } else {
-            logger.warn("IRAKLIS respondAndRelease " + listener, new RuntimeException("stack trace"));
             ActionListener.respondAndRelease(
                 listener,
                 buildSearchResponse(
@@ -652,11 +650,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
                 }
             }
         });
-        logger.warn("IRAKLIS onFailure " + listener, new RuntimeException("stack trace"));
         listener.onFailure(exception);
-//        if (phaseFailed.compareAndSet(false, true)) {
-//            listener.onFailure(exception);
-//        }
     }
 
     /**

@@ -23,14 +23,12 @@ import org.elasticsearch.action.support.ChannelActionListener;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.routing.SplitShardCountSummary;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.RecyclerBytesStreamOutput;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
-import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.common.util.concurrent.CountDown;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.common.util.concurrent.ListenableFuture;
@@ -57,7 +55,6 @@ import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.AbstractTransportRequest;
 import org.elasticsearch.transport.BytesTransportResponse;
 import org.elasticsearch.transport.LeakTracker;
-import org.elasticsearch.transport.NodeDisconnectedException;
 import org.elasticsearch.transport.SendRequestTransportException;
 import org.elasticsearch.transport.Transport;
 import org.elasticsearch.transport.TransportActionProxy;
@@ -75,7 +72,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -504,7 +500,6 @@ public class SearchQueryThenFetchAsyncAction extends AbstractSearchAsyncAction<S
                 executeWithoutBatching(routing, request);
                 return;
             }
-            logger.warn("IRAKLIS sending to " + connection.getNode().getId() + " new " + NODE_SEARCH_ACTION_NAME + " task " + task + " request " + request);
             searchTransportService.transportService()
                 .sendChildRequest(connection, NODE_SEARCH_ACTION_NAME, request, task, new TransportResponseHandler<NodeQueryResponse>() {
                     @Override
@@ -519,22 +514,6 @@ public class SearchQueryThenFetchAsyncAction extends AbstractSearchAsyncAction<S
 
                     @Override
                     public void handleResponse(NodeQueryResponse response) {
-                        logger.warn("IRAKLIS handling response " + NODE_SEARCH_ACTION_NAME + " task " + task + " request " + request);
-//                        if (System.currentTimeMillis() % 2 == 0) {
-//                            //response.decRef();
-//                            final var e = new NodeDisconnectedException(
-//                                new DiscoveryNode(
-//                                    "bla",
-//                                    "blu",
-//                                    new TransportAddress(TransportAddress.META_ADDRESS, 80),
-//                                    Map.of(),
-//                                    Set.of(),
-//                                    null
-//                                ),
-//                                "intended"
-//                            );
-//                            throw new SendRequestTransportException(connection.getNode(), NODE_SEARCH_ACTION_NAME, e);
-//                        }
                         if (results instanceof QueryPhaseResultConsumer queryPhaseResultConsumer) {
                             queryPhaseResultConsumer.addBatchedPartialResult(response.topDocsStats, response.mergeResult);
                         }
@@ -559,9 +538,9 @@ public class SearchQueryThenFetchAsyncAction extends AbstractSearchAsyncAction<S
                     @Override
                     public void handleException(TransportException e) {
                         Exception cause = (Exception) ExceptionsHelper.unwrapCause(e);
-                        logger.warn("IRAKLIS node search exception coming from [" + nodeId + "] for" + NODE_SEARCH_ACTION_NAME + " task " + task + " request " + request);
                         logger.debug("handling node search exception coming from [" + nodeId + "]", cause);
-                        if (e instanceof NodeDisconnectedException || e instanceof SendRequestTransportException || cause instanceof TaskCancelledException) {
+                        // We need to add NodeDisconnectedException (or better yet ActionTransportException) in the if clause here.
+                        if (e instanceof SendRequestTransportException || cause instanceof TaskCancelledException) {
                             // two possible special cases here where we do not want to fail the phase:
                             // failure to send out the request -> handle things the same way a shard would fail with unbatched execution
                             // as this could be a transient failure and partial results we may have are still valid
