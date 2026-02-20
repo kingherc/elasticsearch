@@ -18,13 +18,18 @@ import org.elasticsearch.bootstrap.BootstrapCheck;
 import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.coordination.ElectionStrategy;
+import org.elasticsearch.cluster.coordination.LeaderHeartbeatService;
+import org.elasticsearch.cluster.coordination.PreVoteCollector;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.metadata.IndexTemplateMetadata;
 import org.elasticsearch.cluster.metadata.SingleNodeShutdownMetadata;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.project.ProjectResolver;
+import org.elasticsearch.cluster.routing.ShardRoutingRoleStrategy;
 import org.elasticsearch.cluster.routing.allocation.ExistingShardsAllocator;
+import org.elasticsearch.cluster.routing.allocation.allocator.BalancerSettings;
+import org.elasticsearch.cluster.routing.allocation.allocator.BalancingWeightsFactory;
 import org.elasticsearch.cluster.routing.allocation.decider.AllocationDecider;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.CheckedBiConsumer;
@@ -459,6 +464,118 @@ public class LocalStateCompositeXPackPlugin extends XPackPlugin
         Map<String, ElectionStrategy> electionStrategies = new HashMap<>();
         filterPlugins(ClusterCoordinationPlugin.class).forEach(p -> electionStrategies.putAll(p.getElectionStrategies()));
         return electionStrategies;
+    }
+
+    @Override
+    public Optional<PersistedStateFactory> getPersistedStateFactory() {
+        // There can be only one.
+        List<PersistedStateFactory> items = filterPlugins(ClusterCoordinationPlugin.class).stream()
+            .map(p -> p.getPersistedStateFactory().orElse(null))
+            .filter(Objects::nonNull)
+            .toList();
+        if (items.size() > 1) {
+            throw new UnsupportedOperationException("Expected only one PersistedStateFactory");
+        } else if (items.size() == 1) {
+            return Optional.of(items.getFirst());
+        } else {
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    public Optional<PersistedClusterStateServiceFactory> getPersistedClusterStateServiceFactory() {
+        // There can be only one.
+        List<PersistedClusterStateServiceFactory> items = filterPlugins(ClusterCoordinationPlugin.class).stream()
+            .map(p -> p.getPersistedClusterStateServiceFactory().orElse(null))
+            .filter(Objects::nonNull)
+            .toList();
+        if (items.size() > 1) {
+            throw new UnsupportedOperationException("Expected only one PersistedClusterStateServiceFactory");
+        } else if (items.size() == 1) {
+            return Optional.of(items.getFirst());
+        } else {
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    public Optional<ReconfiguratorFactory> getReconfiguratorFactory() {
+        // There can be only one.
+        List<ReconfiguratorFactory> items = filterPlugins(ClusterCoordinationPlugin.class).stream()
+            .map(p -> p.getReconfiguratorFactory().orElse(null))
+            .filter(Objects::nonNull)
+            .toList();
+        if (items.size() > 1) {
+            throw new UnsupportedOperationException("Expected only one ReconfiguratorFactory");
+        } else if (items.size() == 1) {
+            return Optional.of(items.getFirst());
+        } else {
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    public Optional<PreVoteCollector.Factory> getPreVoteCollectorFactory() {
+        // There can be only one.
+        List<PreVoteCollector.Factory> items = filterPlugins(ClusterCoordinationPlugin.class).stream()
+            .map(p -> p.getPreVoteCollectorFactory().orElse(null))
+            .filter(Objects::nonNull)
+            .toList();
+        if (items.size() > 1) {
+            throw new UnsupportedOperationException("Expected only one PreVoteCollector.Factory");
+        } else if (items.size() == 1) {
+            return Optional.of(items.getFirst());
+        } else {
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    public Optional<LeaderHeartbeatService> getLeaderHeartbeatService(Settings settings) {
+        // There can be only one.
+        List<LeaderHeartbeatService> items = filterPlugins(ClusterCoordinationPlugin.class).stream()
+            .map(p -> p.getLeaderHeartbeatService(settings).orElse(null))
+            .filter(Objects::nonNull)
+            .toList();
+        if (items.size() > 1) {
+            throw new UnsupportedOperationException("Expected only one LeaderHeartbeatService");
+        } else if (items.size() == 1) {
+            return Optional.of(items.getFirst());
+        } else {
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    public ShardRoutingRoleStrategy getShardRoutingRoleStrategy() {
+        // There can be only one.
+        List<ShardRoutingRoleStrategy> items = filterPlugins(ClusterPlugin.class).stream()
+            .map(ClusterPlugin::getShardRoutingRoleStrategy)
+            .filter(Objects::nonNull)
+            .toList();
+        if (items.size() > 1) {
+            throw new UnsupportedOperationException("Expected only one ShardRoutingRoleStrategy");
+        } else if (items.size() == 1) {
+            return items.getFirst();
+        } else {
+            return null;
+        }
+    }
+
+    @Override
+    public BalancingWeightsFactory getBalancingWeightsFactory(BalancerSettings balancerSettings, ClusterSettings clusterSettings) {
+        // There can be only one.
+        List<BalancingWeightsFactory> items = filterPlugins(ClusterPlugin.class).stream()
+            .map(p -> p.getBalancingWeightsFactory(balancerSettings, clusterSettings))
+            .filter(Objects::nonNull)
+            .toList();
+        if (items.size() > 1) {
+            throw new UnsupportedOperationException("Expected only one BalancingWeightsFactory");
+        } else if (items.size() == 1) {
+            return items.getFirst();
+        } else {
+            return null;
+        }
     }
 
     @Override
