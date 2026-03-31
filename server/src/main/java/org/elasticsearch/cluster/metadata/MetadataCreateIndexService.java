@@ -2029,9 +2029,7 @@ public class MetadataCreateIndexService {
         }
         // ensure no resharding operation is in progress
         if (sourceMetadata.getReshardingMetadata() != null) {
-            throw new IllegalStateException(
-                "index " + sourceIndex + " cannot be resized while a resharding operation is in progress"
-            );
+            throw new IllegalStateException("index " + sourceIndex + " cannot be resized while a resharding operation is in progress");
         }
 
         if (INDEX_NUMBER_OF_SHARDS_SETTING.exists(targetIndexSettings)) {
