@@ -1197,6 +1197,11 @@ public class EsqlCapabilities {
         SUBQUERY_IN_FROM_COMMAND_APPEND_IMPLICIT_LIMIT_TO_UNBOUNDED_SORT_IN_SUBQUERY,
 
         /**
+         * Prune no-fields in subquery project.
+         */
+        SUBQUERY_IN_FROM_COMMAND_PRUNE_NO_FIELDS,
+
+        /**
          * Support for views in cluster state (and REST API).
          */
         VIEWS_IN_CLUSTER_STATE(EsqlFeatureFlags.ESQL_VIEWS_FEATURE_FLAG.isEnabled()),
@@ -2351,12 +2356,12 @@ public class EsqlCapabilities {
          * Enables the feature LIMIT n BY expr1, expr2 for retaining at most n docs per group.
          * The feature will not work if we had SORT | LIMIT n BY
          */
-        ESQL_LIMIT_BY(Build.current().isSnapshot()),
+        ESQL_LIMIT_BY,
 
         /**
          * Enables the SORT | LIMIT n BY expr1, expr2 support, see ESQL_LIMIT_BY for more context
          */
-        ESQL_TOPN_BY(Build.current().isSnapshot()),
+        ESQL_TOPN_BY,
 
         /**
          * Corrects a bug with ENRICH when a shard does not contain an index field and we use LIMIT BY on top
