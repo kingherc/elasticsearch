@@ -91,11 +91,13 @@ import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -103,6 +105,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 import java.util.function.BiPredicate;
 import java.util.function.Consumer;
 
@@ -127,6 +130,7 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
+import static org.junit.Assert.fail;
 
 @SuppressForbidden(reason = "use a http server")
 public class ReindexerTests extends ESTestCase {
@@ -821,6 +825,50 @@ public class ReindexerTests extends ESTestCase {
 
         verify(delegate).onFailure(any());
         assertThat(closeCount.get(), equalTo(0));
+    }
+
+    /**
+     * The wrapped listener must not call the delegate until the async PIT close signals completion; otherwise a client
+     * can observe {@code open_contexts > 0} immediately after reindex returns.
+     */
+    public void testWrapListenerWithClosePitDefersResponseUntilAsyncPitCloseCompletes() throws Exception {
+        final List<String> order = Collections.synchronizedList(new ArrayList<>());
+        final CountDownLatch pitCloseMayFinish = new CountDownLatch(1);
+        final TestThreadPool threadPool = new TestThreadPool(getTestName());
+        try {
+            final BiConsumer<BytesReference, ActionListener<Void>> asyncClose = (id, listener) -> {
+                order.add("pit-close-scheduled");
+                threadPool.generic().execute(() -> {
+                    try {
+                        assertThat(pitCloseMayFinish.await(5, TimeUnit.SECONDS), is(true));
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        listener.onFailure(new RuntimeException(e));
+                        return;
+                    }
+                    order.add("pit-close-finished");
+                    listener.onResponse(null);
+                });
+            };
+            final ActionListener<BulkByScrollResponse> delegate = ActionListener.wrap(
+                r -> order.add("response"),
+                e -> fail(e)
+            );
+            final ActionListener<BulkByScrollResponse> wrapped = Reindexer.wrapListenerWithClosePit(
+                new BytesArray("pit"),
+                delegate,
+                asyncClose,
+                null,
+                () -> false,
+                Runnable::run
+            );
+            wrapped.onResponse(reindexResponseWithBulkAndSearchFailures(null, null));
+            assertThat(order, equalTo(List.of("pit-close-scheduled")));
+            pitCloseMayFinish.countDown();
+            assertBusy(() -> assertThat(order, equalTo(List.of("pit-close-scheduled", "pit-close-finished", "response"))));
+        } finally {
+            terminate(threadPool);
+        }
     }
 
     /**

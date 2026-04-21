@@ -99,6 +99,7 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -245,7 +246,8 @@ public class Reindexer {
                     responseListener,
                     this::closeLocalPit,
                     task,
-                    shouldNotClosePitOnResponse(task)
+                    shouldNotClosePitOnResponse(task),
+                    Runnable::run
                 );
                 Consumer<Version> workerActionWithClosePit = createWorkerAction(task, request, bulkClient, listenerWithClosePit);
                 executePaginatedSearch(task, request, listenerWithClosePit, workerActionWithClosePit, null);
@@ -358,7 +360,8 @@ public class Reindexer {
                 l,
                 this::closeLocalPit,
                 task,
-                shouldNotClosePitOnResponse(task)
+                shouldNotClosePitOnResponse(task),
+                Runnable::run
             );
             Consumer<Version> workerActionWithClosePit = createWorkerAction(task, request, bulkClient, listenerWithClosePit);
             executePaginatedSearch(task, request, listenerWithClosePit, workerActionWithClosePit, null);
@@ -374,20 +377,33 @@ public class Reindexer {
      * <p>
      * On <strong>failure</strong>: skips closing when the failure is {@link TaskRelocatedException}, or when
      * {@link BulkByScrollTask#isRelocationRequested()} is true so a relocated task can still adopt the PIT.
-     * Visible for testing
+     *
+     * package-private for testing
      */
     static ActionListener<BulkByScrollResponse> wrapListenerWithClosePit(
         BytesReference pitId,
         ActionListener<BulkByScrollResponse> listener,
         Consumer<BytesReference> closePit
     ) {
-        return wrapListenerWithClosePit(pitId, listener, closePit, null, () -> false);
+        return wrapListenerWithClosePit(
+            pitId,
+            listener,
+            (id, completionListener) -> ActionListener.completeWith(completionListener, () -> {
+                closePit.accept(id);
+                return null;
+            }),
+            null,
+            () -> false,
+            Runnable::run
+        );
     }
 
     /**
      * Same as {@link #wrapListenerWithClosePit(BytesReference, ActionListener, Consumer)} but with task context.
      * When {@code shouldNotCloseOnResponse} returns true, the PIT is not closed on response (e.g. sliced workers
      * must not close the shared PIT; only the leader closes when all complete).
+     *
+     * package-private for testing
      */
     static ActionListener<BulkByScrollResponse> wrapListenerWithClosePit(
         BytesReference pitId,
@@ -396,7 +412,17 @@ public class Reindexer {
         @Nullable BulkByScrollTask task,
         BooleanSupplier shouldNotCloseOnResponse
     ) {
-        return wrapListenerWithClosePit(pitId, listener, closePit, task, shouldNotCloseOnResponse, Runnable::run);
+        return wrapListenerWithClosePit(
+            pitId,
+            listener,
+            (id, completionListener) -> ActionListener.completeWith(completionListener, () -> {
+                closePit.accept(id);
+                return null;
+            }),
+            task,
+            shouldNotCloseOnResponse,
+            Runnable::run
+        );
     }
 
     /**
@@ -405,11 +431,15 @@ public class Reindexer {
      * or not closed on failure (relocation in progress), this runs before delegating to the listener.
      * For local PIT use {@link Runnable#run}; for remote PIT use
      * {@code next -> closeRestClientAndRun(restClient, next)} so the RestClient is closed before notifying.
+     * <p>
+     * When the PIT is closed, {@code closePit} must invoke the completion listener after the close finishes (or after
+     * a close failure is handled), so callers only observe completion once reader contexts are released. The completion listener
+     * failures are not propagated as mentioned in the javadoc of {@code closeLocalPit} and {@code closeRemotePitAndRestClient}.
      */
     static ActionListener<BulkByScrollResponse> wrapListenerWithClosePit(
         BytesReference pitId,
         ActionListener<BulkByScrollResponse> listener,
-        Consumer<BytesReference> closePit,
+        BiConsumer<BytesReference, ActionListener<Void>> closePit,
         @Nullable BulkByScrollTask task,
         BooleanSupplier shouldNotCloseOnResponse,
         Consumer<Runnable> onSkipClosePit
@@ -419,8 +449,11 @@ public class Reindexer {
             public void onResponse(BulkByScrollResponse response) {
                 if (response.getTaskResumeInfo().isEmpty() && shouldNotCloseOnResponse.getAsBoolean() == false) {
                     BytesReference idToClose = response.getPitId().orElse(pitId);
-                    closePit.accept(idToClose);
-                    listener.onResponse(response);
+                    // Failures are not propagated as mentioned in the javadoc of closeLocalPit and closeRemotePitAndRestClient
+                    closePit.accept(
+                        idToClose,
+                        ActionListener.wrap(r -> listener.onResponse(response), e -> listener.onResponse(response))
+                    );
                 } else {
                     onSkipClosePit.accept(() -> listener.onResponse(response));
                 }
@@ -430,8 +463,10 @@ public class Reindexer {
             public void onFailure(Exception e) {
                 boolean skipClose = e instanceof TaskRelocatedException || (task != null && task.isRelocationRequested());
                 if (skipClose == false) {
-                    closePit.accept(pitId);
-                    listener.onFailure(e);
+                    closePit.accept(
+                        pitId,
+                        ActionListener.wrap(r -> listener.onFailure(e), nested -> listener.onFailure(e))
+                    );
                 } else {
                     onSkipClosePit.accept(() -> listener.onFailure(e));
                 }
@@ -443,13 +478,17 @@ public class Reindexer {
      * Closes a point-in-time on the local cluster, releasing the associated search contexts.
      * Failures are logged but not propagated to avoid masking the original completion or failure.
      *
-     * @param pitId the encoded PIT identifier to close
+     * @param pitId    the encoded PIT identifier to close
+     * @param listener notified with {@code null} after the close attempt finishes
      */
-    private void closeLocalPit(BytesReference pitId) {
+    private void closeLocalPit(BytesReference pitId, ActionListener<Void> listener) {
         client.execute(
             TransportClosePointInTimeAction.TYPE,
             new ClosePointInTimeRequest(pitId),
-            ActionListener.wrap(r -> {}, e -> logger.warn("Failed to close local PIT", e))
+            ActionListener.wrap(r -> listener.onResponse(null), e -> {
+                logger.warn("Failed to close local PIT", e);
+                listener.onResponse(null);
+            })
         );
     }
 
@@ -459,14 +498,15 @@ public class Reindexer {
      *
      * @param pitId      the encoded PIT identifier to close on the remote cluster
      * @param restClient the RestClient to close after the PIT is closed
+     * @param listener   notified with {@code null} after the PIT close attempt and RestClient close finish
      */
-    private void closeRemotePitAndRestClient(BytesReference pitId, RestClient restClient) {
-        closePit(pitId, RejectAwareActionListener.wrap(v -> closeRestClientAndRun(restClient, () -> {}), e -> {
+    private void closeRemotePitAndRestClient(BytesReference pitId, RestClient restClient, ActionListener<Void> listener) {
+        closePit(pitId, RejectAwareActionListener.wrap(v -> closeRestClientAndRun(restClient, () -> listener.onResponse(null)), e -> {
             logger.warn("Failed to close remote PIT", e);
-            closeRestClientAndRun(restClient, () -> {});
+            closeRestClientAndRun(restClient, () -> listener.onResponse(null));
         }, e -> {
             logger.warn("Failed to close remote PIT (rejected)", e);
-            closeRestClientAndRun(restClient, () -> {});
+            closeRestClientAndRun(restClient, () -> listener.onResponse(null));
         }), threadPool, restClient);
     }
 
@@ -497,7 +537,7 @@ public class Reindexer {
                         ActionListener<BulkByScrollResponse> listenerWithClosePit = wrapListenerWithClosePit(
                             pitId,
                             listener,
-                            id -> closeRemotePitAndRestClient(id, restClient),
+                            (id, completionListener) -> closeRemotePitAndRestClient(id, restClient, completionListener),
                             task,
                             shouldNotClosePitOnResponse(task),
                             next -> closeRestClientAndRun(restClient, next)
@@ -556,7 +596,7 @@ public class Reindexer {
             ActionListener<BulkByScrollResponse> listenerWithClosePit = wrapListenerWithClosePit(
                 pitId,
                 listenerWithRelocations,
-                id -> closeRemotePitAndRestClient(id, restClient),
+                (id, completionListener) -> closeRemotePitAndRestClient(id, restClient, completionListener),
                 task,
                 shouldNotClosePitOnResponse(task),
                 next -> closeRestClientAndRun(restClient, next)
