@@ -707,6 +707,7 @@ public class StatelessPlugin extends Plugin
         ;
         if (sharedCachedSettingExplicitlySet == false) {
             if (hasSearchRole) {
+//                settings.put(SharedBlobCacheService.SHARED_CACHE_SIZE_SETTING.getKey(), "30g");
                 settings.put(SharedBlobCacheService.SHARED_CACHE_SIZE_SETTING.getKey(), "90%")
                     .put(SharedBlobCacheService.SHARED_CACHE_SIZE_MAX_HEADROOM_SETTING.getKey(), "250GB");
             }
