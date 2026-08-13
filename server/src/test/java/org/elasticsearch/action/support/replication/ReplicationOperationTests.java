@@ -70,6 +70,7 @@ import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.arrayWithSize;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.nullValue;
 
@@ -527,6 +528,81 @@ public class ReplicationOperationTests extends ESTestCase {
             assertFalse("operations should not have been perform, active shard count is *NOT* met", request.processedOnPrimary.get());
             assertListenerThrows("should throw exception to trigger retry", listener, UnavailableShardsException.class);
         }
+    }
+
+    /**
+     * The global checkpoint must be sampled before the replication group. If we sample in reverse, a replica can leave
+     * the in-sync set in between those samples. The global checkpoint is then computed from a subset of the already
+     * sampled group and can advance past that replica's local checkpoint. Replicating that checkpoint to the full
+     * sampled group would let the replica that left in-sync learn a global checkpoint higher than its local checkpoint.
+     */
+    public void testGlobalCheckpointSampledBeforeReplicationGroup() throws Exception {
+        final String index = "test";
+        final ShardId shardId = new ShardId(index, "_na_", 0);
+
+        final ClusterState state = stateWithActivePrimary(index, true, randomIntBetween(2, 3), 0);
+        final IndexMetadata indexMetadata = state.getMetadata().getProject().index(index);
+        final long primaryTerm = indexMetadata.primaryTerm(0);
+        final ShardRouting primaryRouting = state.getRoutingTable().shardRoutingTable(shardId).primaryShard();
+        final IndexShardRoutingTable shardRoutingTable = state.routingTable().index(index).shard(shardId.id());
+        final Set<String> inSyncAllocationIds = indexMetadata.inSyncAllocationIds(0);
+        final Set<String> trackedShards = shardRoutingTable.getPromotableAllocationIds();
+        final ReplicationGroup replicationGroup = new ReplicationGroup(shardRoutingTable, inSyncAllocationIds, trackedShards, 0);
+        final Set<ShardRouting> replicas = getExpectedReplicas(shardId, state, trackedShards);
+        assertThat(
+            "need multiple replicas so the in-sync set can be a proper subset of the sampled group",
+            replicas.size(),
+            greaterThan(1)
+        );
+
+        // GCP while every replica in the group is still in-sync.
+        final long gcpFromFullGroup = randomLongBetween(0, 100);
+        // GCP after a replica may leave in-sync, computed from the remaining subset, which can advance.
+        final long gcpFromInSyncSubset = gcpFromFullGroup + randomLongBetween(1, 100);
+        final AtomicBoolean capturedSampledGroup = new AtomicBoolean();
+
+        final TestPrimary primary = new TestPrimary(primaryRouting, () -> replicationGroup, threadPool) {
+            @Override
+            public long computedGlobalCheckpoint() {
+                // If the replication group was already captured, a replica may have left the in-sync set.
+                // GCP is then based on a subset of that sampled group and can exceed that replica's local checkpoint.
+                return capturedSampledGroup.get() ? gcpFromInSyncSubset : gcpFromFullGroup;
+            }
+
+            @Override
+            public ReplicationGroup getReplicationGroup() {
+                capturedSampledGroup.set(true);
+                return super.getReplicationGroup();
+            }
+        };
+
+        final Map<ShardRouting, Long> receivedGlobalCheckpoints = ConcurrentCollections.newConcurrentMap();
+        final TestReplicaProxy replicasProxy = new TestReplicaProxy() {
+            @Override
+            public void performOn(
+                ShardRouting replica,
+                Request request,
+                long primaryTerm,
+                long globalCheckpoint,
+                long maxSeqNoOfUpdatesOrDeletes,
+                ActionListener<ReplicationOperation.ReplicaResponse> listener
+            ) {
+                receivedGlobalCheckpoints.put(replica, globalCheckpoint);
+                super.performOn(replica, request, primaryTerm, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes, listener);
+            }
+        };
+
+        final Request request = new Request(shardId);
+        final PlainActionFuture<TestPrimary.Result> listener = new PlainActionFuture<>();
+        new TestReplicationOperation(request, primary, listener, replicasProxy, primaryTerm).execute();
+        listener.actionGet();
+
+        assertThat(receivedGlobalCheckpoints.keySet(), equalTo(replicas));
+        assertThat(
+            "replicas in the sampled group must not receive a GCP computed from a later in-sync subset",
+            Set.copyOf(receivedGlobalCheckpoints.values()),
+            equalTo(Set.of(gcpFromFullGroup))
+        );
     }
 
     public void testPrimaryFailureHandlingReplicaResponse() throws Exception {
