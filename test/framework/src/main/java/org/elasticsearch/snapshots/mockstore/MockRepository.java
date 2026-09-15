@@ -65,6 +65,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
@@ -658,6 +659,27 @@ public class MockRepository extends FsRepository {
             }
 
             @Override
+            public void writeBlob(OperationPurpose purpose, String blobName, BytesReference bytes, boolean failIfAlreadyExists)
+                throws IOException {
+                try (InputStream inputStream = bytes.streamInput()) {
+                    writeBlob(purpose, blobName, inputStream, bytes.length(), failIfAlreadyExists);
+                }
+            }
+
+            @Override
+            public void writeBlob(
+                OperationPurpose purpose,
+                String blobName,
+                long blobSize,
+                BlobMultiPartInputStreamProvider provider,
+                boolean failIfAlreadyExists
+            ) throws IOException {
+                try (InputStream inputStream = provider.apply(0L, blobSize)) {
+                    writeBlob(purpose, blobName, inputStream, blobSize, failIfAlreadyExists);
+                }
+            }
+
+            @Override
             public void writeMetadataBlob(
                 OperationPurpose purpose,
                 String blobName,
@@ -710,6 +732,20 @@ public class MockRepository extends FsRepository {
                     // by the delegating blob container
                     maybeIOExceptionOrBlock(blobName);
                     super.writeBlobAtomic(purpose, blobName, inputStream, blobSize, failIfAlreadyExists);
+                }
+            }
+
+            @Override
+            public void writeBlobAtomic(
+                OperationPurpose purpose,
+                String blobName,
+                long blobSize,
+                BlobMultiPartInputStreamProvider provider,
+                boolean failIfAlreadyExists,
+                Executor executor
+            ) throws IOException {
+                try (InputStream inputStream = provider.apply(0L, blobSize)) {
+                    writeBlobAtomic(purpose, blobName, inputStream, blobSize, failIfAlreadyExists);
                 }
             }
 

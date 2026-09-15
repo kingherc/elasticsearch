@@ -55,6 +55,7 @@ import org.elasticsearch.threadpool.ThreadPool;
 import org.junit.After;
 import org.junit.Before;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -343,8 +344,18 @@ public class AzureBlobContainerRetriesTests extends AbstractBlobContainerRetries
             }
         });
 
-        try (InputStream stream = new InputStreamIndexInput(new ByteArrayIndexInput("desc", bytes), bytes.length)) {
-            blobContainer.writeBlob(randomPurpose(), "write_blob_max_retries", stream, bytes.length, false);
+        if (randomBoolean()) {
+            blobContainer.writeBlob(
+                randomPurpose(),
+                "write_blob_max_retries",
+                bytes.length,
+                (offset, length) -> new ByteArrayInputStream(bytes, Math.toIntExact(offset), Math.toIntExact(length)),
+                false
+            );
+        } else {
+            try (InputStream stream = new InputStreamIndexInput(new ByteArrayIndexInput("desc", bytes), bytes.length)) {
+                blobContainer.writeBlob(randomPurpose(), "write_blob_max_retries", stream, bytes.length, false);
+            }
         }
         assertThat(countDown.isCountedDown(), is(true));
     }

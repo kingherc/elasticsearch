@@ -361,8 +361,18 @@ public class S3BlobContainerRetriesTests extends AbstractBlobContainerRetriesTes
                 exchange.close();
             }
         });
-        try (InputStream stream = new InputStreamIndexInput(new ByteArrayIndexInput("desc", bytes), bytes.length)) {
-            blobContainer.writeBlob(randomPurpose(), "write_blob_max_retries", stream, bytes.length, false);
+        if (randomBoolean()) {
+            blobContainer.writeBlob(
+                randomPurpose(),
+                "write_blob_max_retries",
+                bytes.length,
+                (offset, length) -> new ByteArrayInputStream(bytes, Math.toIntExact(offset), Math.toIntExact(length)),
+                false
+            );
+        } else {
+            try (InputStream stream = new InputStreamIndexInput(new ByteArrayIndexInput("desc", bytes), bytes.length)) {
+                blobContainer.writeBlob(randomPurpose(), "write_blob_max_retries", stream, bytes.length, false);
+            }
         }
         assertThat(countDown.isCountedDown(), is(true));
     }
