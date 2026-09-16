@@ -417,9 +417,7 @@ class S3BlobContainer extends AbstractBlobContainer {
         final String absoluteBlobKey = buildKey(blobName);
         final ConditionalOperation condition = failIfAlreadyExists ? ConditionalOperation.IF_NONE_MATCH : ConditionalOperation.NONE;
         if (blobSize <= getLargeBlobThresholdInBytes()) {
-            try (var stream = provider.apply(0L, blobSize)) {
-                writeBlob(purpose, blobName, stream, blobSize, failIfAlreadyExists);
-            }
+            writeBlob(purpose, blobName, blobSize, provider, failIfAlreadyExists);
             return;
         }
         ensureMultiPartUploadSize(blobSize);
@@ -446,7 +444,9 @@ class S3BlobContainer extends AbstractBlobContainer {
                     partSize,
                     lastPart
                 );
-                try (var clientReference = blobStore.clientReference()) {
+                // Fail fast on provider errors so the MPU is aborted without waiting for the SDK to consume the body.
+                final InputStream stream = provider.apply(offset, partSize);
+                try (stream; var clientReference = blobStore.clientReference()) {
                     final UploadPartResponse uploadResponse = clientReference.client()
                         .uploadPart(uploadRequest, requestBodyFromProvider(provider, offset, partSize));
                     completedParts[partNum] = CompletedPart.builder().partNumber(partNum + 1).eTag(uploadResponse.eTag()).build();
