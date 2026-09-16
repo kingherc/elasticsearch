@@ -592,7 +592,7 @@ public class AzureBlobStore implements BlobStore {
             }
             if (multiParts == null || multiParts.size() == 1) {
                 logger.debug("{}: uploading blob of size [{}] as single upload", blobName, blobSize);
-                var flux = toFlux(provider, 0L, blobSize, DEFAULT_UPLOAD_BUFFERS_SIZE);
+                var flux = toFlux(blobName, provider, 0L, blobSize, DEFAULT_UPLOAD_BUFFERS_SIZE, 0);
                 executeSingleUpload(purpose, blobName, flux, blobSize, failIfAlreadyExists);
             } else {
                 logger.debug("{}: uploading blob of size [{}] using [{}] parts", blobName, blobSize, multiParts.size());
@@ -681,13 +681,11 @@ public class AzureBlobStore implements BlobStore {
             multiPart.blockSize(),
             multiPart.blockOffset()
         );
-        return asyncClient.stageBlock(multiPart.blockId(), toFlux(() -> {
-            try {
-                return wrapInputStream(blobName, provider.apply(multiPart.blockOffset(), multiPart.blockSize()), multiPart);
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
-        }, multiPart.blockSize(), DEFAULT_UPLOAD_BUFFERS_SIZE), multiPart.blockSize())
+        return asyncClient.stageBlock(
+            multiPart.blockId(),
+            toFlux(blobName, provider, multiPart.blockOffset(), multiPart.blockSize(), DEFAULT_UPLOAD_BUFFERS_SIZE, multiPart.part()),
+            multiPart.blockSize()
+        )
             .doOnSuccess(
                 unused -> logger.debug(
                     () -> format("%s: part [%s] of size [%s] uploaded", blobName, multiPart.part(), multiPart.blockSize())
@@ -938,14 +936,16 @@ public class AzureBlobStore implements BlobStore {
      * and reads it into {@link ByteBuffer}s without {@link InputStream#mark}/{@link InputStream#reset}.
      */
     private static Flux<ByteBuffer> toFlux(
+        String blobName,
         BlobContainer.BlobMultiPartInputStreamProvider provider,
         long offset,
         long length,
-        int byteBufferSize
+        int byteBufferSize,
+        int part
     ) {
         return toFlux(() -> {
             try {
-                return provider.apply(offset, length);
+                return wrapInputStream(blobName, provider.apply(offset, length), part);
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
@@ -955,7 +955,7 @@ public class AzureBlobStore implements BlobStore {
     /**
      * Wraps an {@link InputStream} to assert that it is read only by a single thread at a time and to add log traces.
      */
-    private static InputStream wrapInputStream(final String blobName, final InputStream delegate, final MultiPart multipart) {
+    private static InputStream wrapInputStream(final String blobName, final InputStream delegate, final int part) {
         return new FilterInputStream(delegate) {
 
             private final AtomicReference<Thread> currentThread = Assertions.ENABLED ? new AtomicReference<>() : null;
@@ -968,7 +968,7 @@ public class AzureBlobStore implements BlobStore {
                 try {
                     var result = super.read(b, off, len);
                     if (isTraceEnabled) {
-                        logger.trace("{} reads {} bytes from {} part {}", Thread.currentThread(), result, blobName, multipart.part());
+                        logger.trace("{} reads {} bytes from {} part {}", Thread.currentThread(), result, blobName, part);
                     }
                     return result;
                 } finally {
@@ -983,7 +983,7 @@ public class AzureBlobStore implements BlobStore {
                 try {
                     var result = super.read();
                     if (isTraceEnabled) {
-                        logger.trace("{} reads {} byte from {} part {}", Thread.currentThread(), result, blobName, multipart.part());
+                        logger.trace("{} reads {} byte from {} part {}", Thread.currentThread(), result, blobName, part);
                     }
                     return result;
                 } finally {
@@ -1003,7 +1003,7 @@ public class AzureBlobStore implements BlobStore {
                         + " is already reading "
                         + blobName
                         + " part "
-                        + multipart.part();
+                        + part;
                 return true;
             }
         };
