@@ -195,17 +195,6 @@ class S3BlobContainer extends AbstractBlobContainer {
     }
 
     @Override
-    public void writeBlob(OperationPurpose purpose, String blobName, BytesReference bytes, boolean failIfAlreadyExists) throws IOException {
-        writeBlob(
-            purpose,
-            blobName,
-            bytes.length(),
-            (offset, length) -> bytes.slice(Math.toIntExact(offset), Math.toIntExact(length)).streamInput(),
-            failIfAlreadyExists
-        );
-    }
-
-    @Override
     public void writeMetadataBlob(
         OperationPurpose purpose,
         String blobName,
