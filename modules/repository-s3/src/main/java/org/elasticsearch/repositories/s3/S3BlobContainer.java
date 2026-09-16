@@ -190,7 +190,7 @@ class S3BlobContainer extends AbstractBlobContainer {
         if (blobSize <= getLargeBlobThresholdInBytes()) {
             executeSingleUpload(purpose, blobStore, blobKey, blobSize, singleUploadBody, condition);
         } else {
-            executeMultipartUpload(purpose, blobStore, blobKey, blobSize, condition, multipartBody, null);
+            executeMultipartUpload(purpose, blobStore, blobKey, blobSize, condition, multipartBody);
         }
     }
 
@@ -895,8 +895,7 @@ class S3BlobContainer extends AbstractBlobContainer {
             blobName,
             blobSize,
             condition,
-            (offset, length) -> RequestBody.fromInputStream(input, length),
-            null
+            (offset, length) -> RequestBody.fromInputStream(input, length)
         );
     }
 
@@ -906,8 +905,7 @@ class S3BlobContainer extends AbstractBlobContainer {
         final String blobName,
         final long blobSize,
         final ConditionalOperation condition,
-        final PartRequestBody requestBody,
-        @Nullable final Executor executor
+        final PartRequestBody requestBody
     ) throws IOException {
         final long partSizeBytes = s3BlobStore.bufferSizeInBytes();
         executeMultipart(
@@ -928,7 +926,7 @@ class S3BlobContainer extends AbstractBlobContainer {
                 requestBody.get((long) (partNum - 1) * partSizeBytes, partSize)
             ),
             condition,
-            executor
+            null
         );
     }
 
