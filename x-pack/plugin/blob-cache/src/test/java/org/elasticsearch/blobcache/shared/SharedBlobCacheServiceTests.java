@@ -328,6 +328,36 @@ public class SharedBlobCacheServiceTests extends ESTestCase {
         }
     }
 
+    public void testRegionStartOffsetIsRegionTimesRegionSize() throws Exception {
+        final long regionSize = size(4L);
+        Settings settings = Settings.builder()
+            .put(NODE_NAME_SETTING.getKey(), "node")
+            .put(SharedBlobCacheService.SHARED_CACHE_SIZE_SETTING.getKey(), ByteSizeValue.ofBytes(size(100)))
+            .put(SharedBlobCacheService.SHARED_CACHE_REGION_SIZE_SETTING.getKey(), ByteSizeValue.ofBytes(regionSize))
+            .put(SharedBlobCacheService.SHARED_CACHE_INITIAL_DECAYS_SETTING.getKey(), 0)
+            .put("path.home", createTempDir())
+            .build();
+
+        final DeterministicTaskQueue taskQueue = new DeterministicTaskQueue();
+        try (
+            NodeEnvironment environment = new NodeEnvironment(settings, TestEnvironment.newEnvironment(settings));
+            var cacheService = new SharedBlobCacheService<>(
+                environment,
+                settings,
+                taskQueue.getThreadPool(),
+                taskQueue.getThreadPool().executor(ThreadPool.Names.GENERIC),
+                BlobCacheMetrics.NOOP
+            )
+        ) {
+            final var cacheKey = generateCacheKey();
+            final var multiplier = randomIntBetween(1, 10);
+            final long blobLength = regionSize * multiplier;
+            for (int region = 0; region < multiplier; region++) {
+                assertEquals(region * regionSize, cacheService.get(cacheKey, blobLength, region, irrelevantTimestamp()).startOffset());
+            }
+        }
+    }
+
     public void testFetchOverloadsStampTimestamp() throws Exception {
         final long cacheSize = size(500L);
         final long regionSize = size(100L);

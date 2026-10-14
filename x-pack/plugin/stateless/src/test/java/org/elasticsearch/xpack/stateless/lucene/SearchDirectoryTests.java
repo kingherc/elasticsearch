@@ -545,6 +545,96 @@ public class SearchDirectoryTests extends ESTestCase {
         }
     }
 
+    public void testBlobLengthTracksMetadataUpdates() throws IOException {
+        try (var node = createFakeStatelessNode(ByteSizeValue.ofBytes(4096), ByteSizeValue.ofBytes(4096))) {
+            final var searchDirectory = SearchDirectory.unwrapDirectory(node.searchStore.directory());
+            final String blobName = "stateless_commit_1";
+            assertThat(searchDirectory.blobLength(1L, blobName).isPresent(), equalTo(false));
+
+            final var locationA = createBlobLocation(1L, 1L, 0L, 100L);
+            final var locationB = createBlobLocation(1L, 1L, 100L, 150L);
+            final var otherBlob = createBlobLocation(1L, 2L, 0L, 40L);
+            searchDirectory.updateCommit(
+                new StatelessCompoundCommit(
+                    searchDirectory.shardId,
+                    new PrimaryTermAndGeneration(1L, 1L),
+                    1L,
+                    "_na_",
+                    Map.of("fileA", locationA, "fileB", locationB),
+                    250L,
+                    Set.of("fileA", "fileB"),
+                    0L,
+                    InternalFilesReplicatedRanges.EMPTY,
+                    Map.of(),
+                    null
+                )
+            );
+            assertThat(searchDirectory.blobLength(1L, blobName).getAsLong(), equalTo(250L));
+            assertThat(searchDirectory.blobLength(1L, "stateless_commit_2").isPresent(), equalTo(false));
+
+            final var locationC = createBlobLocation(1L, 1L, 250L, 80L);
+            searchDirectory.updateCommit(
+                new StatelessCompoundCommit(
+                    searchDirectory.shardId,
+                    new PrimaryTermAndGeneration(1L, 1L),
+                    2L,
+                    "_na_",
+                    Map.of("fileA", locationA, "fileB", locationB, "fileC", locationC, "other", otherBlob),
+                    370L,
+                    Set.of("fileC", "other"),
+                    0L,
+                    InternalFilesReplicatedRanges.EMPTY,
+                    Map.of(),
+                    null
+                )
+            );
+            assertThat(searchDirectory.blobLength(1L, blobName).getAsLong(), equalTo(330L));
+            assertThat(searchDirectory.blobLength(1L, "stateless_commit_2").getAsLong(), equalTo(40L));
+            assertThat(searchDirectory.blobLength(2L, blobName).isPresent(), equalTo(false));
+
+            // Dropping files, including the one at the end, leaves the length while any file still references the blob.
+            searchDirectory.retainFiles(Set.of("fileA", "fileC", "other"));
+            assertThat(searchDirectory.blobLength(1L, blobName).getAsLong(), equalTo(330L));
+            assertThat(searchDirectory.blobLength(1L, "stateless_commit_2").getAsLong(), equalTo(40L));
+
+            searchDirectory.retainFiles(Set.of("fileA", "other"));
+            assertThat(searchDirectory.blobLength(1L, blobName).getAsLong(), equalTo(330L));
+            assertThat(searchDirectory.blobLength(1L, "stateless_commit_2").getAsLong(), equalTo(40L));
+
+            searchDirectory.retainFiles(Set.of("other"));
+            assertThat(searchDirectory.blobLength(1L, blobName).isPresent(), equalTo(false));
+            assertThat(searchDirectory.blobLength(1L, "stateless_commit_2").getAsLong(), equalTo(40L));
+        }
+    }
+
+    public void testUpdateMetadataRebuildsBlobLengthsFromFarthestFile() throws IOException {
+        try (var node = createFakeStatelessNode(ByteSizeValue.ofBytes(4096), ByteSizeValue.ofBytes(4096))) {
+            final var searchDirectory = SearchDirectory.unwrapDirectory(node.searchStore.directory());
+            final String blobName = "stateless_commit_1";
+            // The earlier file ends further out. The length still comes from the file with the largest offset.
+            final var early = createBlobLocation(1L, 1L, 0L, 500L);
+            final var farthest = createBlobLocation(1L, 1L, 100L, 40L);
+            final var other = createBlobLocation(1L, 2L, 0L, 40L);
+            searchDirectory.updateMetadata(
+                Map.of(
+                    "early",
+                    new BlobFileRanges(early, null),
+                    "farthest",
+                    new BlobFileRanges(farthest, null),
+                    "other",
+                    new BlobFileRanges(other, null)
+                ),
+                580L
+            );
+            assertThat(searchDirectory.blobLength(1L, blobName).getAsLong(), equalTo(140L));
+            assertThat(searchDirectory.blobLength(1L, "stateless_commit_2").getAsLong(), equalTo(40L));
+
+            searchDirectory.updateMetadata(Map.of("early", new BlobFileRanges(early, null)), 500L);
+            assertThat(searchDirectory.blobLength(1L, blobName).getAsLong(), equalTo(500L));
+            assertThat(searchDirectory.blobLength(1L, "stateless_commit_2").isPresent(), equalTo(false));
+        }
+    }
+
     private String randomNonSiFileName() {
         String siExtension = LuceneFilesExtensions.SI.getExtension();
         return randomValueOtherThanMany(name -> name.endsWith(siExtension), () -> randomAlphaOfLength(10));
